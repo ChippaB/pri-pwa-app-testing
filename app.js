@@ -105,27 +105,56 @@ function parsePN_SN(s) {
   // Example: 01008100162502891125111021MGCK2114181
   // ===============================================
   if (raw.startsWith('01')) {
-    const prefix = raw.substring(0, 16); // '01' + 14 digits
-    const part = PART_NUMBER_MAP[prefix];
-    
-    let remainder = raw.substring(16); // Strip the GTIN first
-    let serial = '';
+      const prefix = raw.substring(0, 16); // '01' + 14 digits (GTIN)
+      let part = PART_NUMBER_MAP[prefix]; // <--- Use 'let' so we can change it later
+      
+      let remainder = raw.substring(16); // Strip the GTIN first
+      let serial = ''; // Corrected variable name
 
-    // STEP A: Check for Dates (length is always AI(2) + Date(6) = 8 chars)
-    // 11 = Prod Date, 17 = Exp Date, 13 = Packaging Date
-    if (remainder.startsWith('11') || remainder.startsWith('17') || remainder.startsWith('13')) {
-      remainder = remainder.substring(8); // Skip the date block
-    }
+      // STEP A: Check for Dates (length is always AI(2) + Date(6) = 8 chars)
+      if (remainder.startsWith('11') || remainder.startsWith('17') || remainder.startsWith('13')) {
+        remainder = remainder.substring(8); // Skip the date block
+      }
 
-    // STEP B: Check for Serial Number AI (21)
-    if (remainder.startsWith('21')) {
-      serial = remainder.substring(2); // Skip '21', the rest is Serial
-    } else {
-      // Fallback: If no '21' found, assume whatever is left is the serial
-      serial = remainder; 
-    }
+      // STEP B: Check for Serial Number AI (21)
+      if (remainder.startsWith('21')) {
+        serial = remainder.substring(2); // Assign to 'serial'
+      } else {
+        // Fallback: If no '21' found, assume whatever is left is the serial
+        serial = remainder; // Assign to 'serial'
+      }
 
-    return part ? { part, serial } : { part: 'UNKNOWN', serial };
+      // === NEW: Special Case for PFR... Part IDs Embedded in Serial Number ===
+      // If the serial number contains the PFR pattern, extract the Part ID from it.
+      if (serial) {
+          // Regex to find 'PFR' followed by 3 to 10 alphanumeric characters (case-insensitive)
+          const pfrMatch = serial.match(/^(PFR[A-Z0-9]{3,10})/i); 
+
+          if (pfrMatch) {
+              // The full matching Part ID (e.g., PFR8WK)
+              const identifiedPartId = pfrMatch[1].toUpperCase();
+
+              // 1. Assign the extracted Part ID, overriding the GTIN lookup if necessary
+              part = identifiedPartId; 
+
+              // 2. Clean the Serial Number (remove the Part ID prefix)
+              serial = serial.substring(identifiedPartId.length); 
+
+              // Handle the case where the serial number was ONLY the part ID (e.g., 'PFR8WK')
+              if (!serial) {
+                  serial = identifiedPartId; 
+              } else {
+                  // Optional: Remove any leading non-alphanumeric characters (like a hyphen)
+                  serial = serial.replace(/^[^A-Z0-9]+/, ''); 
+              }
+
+              // Return immediately to prevent the final 'UNKNOWN' fallback
+              return { part, serial }; 
+          }
+      }
+      
+      // Final Fallback: Uses the GTIN lookup result OR defaults to UNKNOWN
+      return part ? { part, serial } : { part: 'UNKNOWN', serial };
   }
   
   // ===============================================
@@ -159,15 +188,27 @@ function parsePN_SN(s) {
         sNum = sNum.substring(0, sNum.length - 1);
       }
     }
+        // Remove trailing slash OR trailing digit (checksum)
+    if (sNum.endsWith('/')) {
+      sNum = sNum.substring(0, sNum.length - 1);
+    } else if (sNum.match(/\d$/)) {
+      // Special case: P5556100 KEEPS the trailing checksum digit
+      if (p !== 'P5556100') {
+        // Remove last digit for all other parts
+        sNum = sNum.substring(0, sNum.length - 1);
+      }
+    }
+
     // [YOUR CUSTOM UX CLEANUP]
-    // Special case: PUL9000K - remove "446" prefix and "0" suffix
-    if (p === '446PUL9000K0') {
-      p = 'PUL9000K';
+    // CONSOLIDATED RULE: Strip leading '446' and trailing character for special part formats.
+    // This handles: 
+    // 1. All new PUL formats (e.g., 446PUL9000E20 -> PUL9000E2)
+    // 2. The old hardcoded PUL case (446PUL9000K0 -> PUL9000K)
+    // 3. The old general case (446758W1 -> 758W)
+    if (p.startsWith('446') && p.length > 4 && (p.includes('PUL') || p.endsWith('1') || p.endsWith('0'))) {
+        p = p.substring(3, p.length - 1);
     }
-    // General case: Converts "446758W1" -> "758W" for display
-    else if (p.startsWith('446') && p.endsWith('1') && p.length > 4) {
-      p = p.substring(3, p.length - 1);
-    }
+
     return { part: p, serial: sNum };
   }
 
@@ -626,11 +667,83 @@ historyToggle.onclick = () => {
   historyPanel.classList.toggle('expanded'); 
   if(historyPanel.classList.contains('expanded')) renderHistory();
 };
-operatorInput.addEventListener('change', () => { 
-  savePrefs(); 
-  loadLastScan();
-  loadBatchComment();  // <-- ADD THIS LINE  // Load last scan for this operator/station combo
-  if (historyPanel.classList.contains('expanded')) renderHistory(); 
+// === FIX 2 & 3: Scan Event Listener (OPTIMISTIC MODE) ===
+scanInput.addEventListener('change', async () => {
+  const raw = scanInput.value.trim();
+  if (!raw) return;
+
+  // 1. Prevent double-scanning logic
+  if (isProcessing) return;
+  isProcessing = true;
+  scanInput.disabled = true;
+
+  // 2. Parse & Clean
+  const { part, serial } = parsePN_SN(raw);
+  const cleanedSerial = cleanSerialClient(serial);
+  const cleanedPart = part || 'UNKNOWN';
+
+  // 3. FAST CHECK: Local Duplicate?
+  if (checkLocalDuplicate(cleanedSerial)) {
+    playSoundDuplicate();
+    show('⚠️ DUPLICATE (Local)', 'dup');
+    
+    // Update display to show the duplicate details
+    lastPart.textContent = cleanedPart;
+    lastSerial.textContent = cleanedSerial;
+    lastScanStatus.textContent = 'DUPLICATE';
+    lastScanStatus.className = 'history-status';
+    lastScanStatus.style.cssText = 'background:#fef3c7; color:#92400e;';
+    
+    // Reset immediately
+    scanInput.value = '';
+    scanInput.disabled = false;
+    scanInput.focus();
+    isProcessing = false;
+    return;
+  }
+
+  // 4. Prepare Payload
+  const payload = {
+    action: 'SCAN',
+    secret: SHARED_SECRET,
+    operator: operatorInput.value || 'UNNAMED',
+    station: stationSel.value,
+    raw_scan: raw,
+    part_number: cleanedPart,
+    serial_number: cleanedSerial,
+    comment: $('#generalNote') ? $('#generalNote').value.trim() : ''
+  };
+
+  // 5. OPTIMISTIC UPDATE: Assume success
+  // Add to History immediately as "PENDING"
+  addToHistory({ 
+    part: cleanedPart, 
+    serial: cleanedSerial, 
+    status: 'PENDING', // Will turn Green/Yellow later via drainQueue
+    timestamp: new Date() 
+  });
+
+  // Update "Last Scan" Display
+  lastPart.textContent = cleanedPart;
+  lastSerial.textContent = cleanedSerial;
+  lastScanStatus.textContent = 'QUEUED';
+  lastScanStatus.className = 'history-status';
+  lastScanStatus.style.cssText = 'background:#dbeafe; color:#1e40af;'; // Blue for pending
+  saveLastScan(cleanedPart, cleanedSerial, 'QUEUED');
+
+  // 6. QUEUE IT & RESET UI
+  enqueue(payload);      // Add to background list
+  playSoundSuccess();    // Beep immediately!
+  
+  // Clear and unlock for next scan INSTANTLY
+  scanInput.value = '';
+  scanInput.disabled = false;
+  scanInput.style.opacity = '1';
+  scanInput.focus();
+  isProcessing = false;
+
+  // 7. Trigger Background Process (Fire and Forget)
+  setTimeout(drainQueue, 50); 
 });
 stationSel.addEventListener('change', () => { 
   savePrefs(); 
