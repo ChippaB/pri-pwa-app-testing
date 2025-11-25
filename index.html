@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+  <meta name="theme-color" content="#f3f4f6">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Polytechnic Serial Number Scan Log</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --navy: #072549; --accent: #2563eb;
+      --bg-primary: #f3f4f6; --bg-card: #ffffff; --border: #d1d5db;
+      --text-primary: #111827; --text-muted: #6b7280;
+      --success: #10b981; --warning: #f59e0b; --error: #ef4444;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: 'Inter', sans-serif; 
+      background: var(--bg-primary); 
+      color: var(--text-primary); 
+      min-height: 100vh; 
+      position: relative;
+      overflow-x: hidden;
+    }
+    
+    /* SUBTLE BACKGROUND LOGO */
+    body::before {
+      content: '';
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 350px;
+      height: 150px;
+      background-image: url('polytechnic logo 678 x 297.png');
+      background-size: contain;
+      background-repeat: no-repeat;
+      background-position: center;
+      opacity: 0.06;
+      z-index: 0;
+      pointer-events: none;
+      filter: blur(1px);
+    }
+    
+    .wrap { 
+      width: 100%; 
+      max-width: 600px;
+      margin: 0 auto; 
+      padding: 12px; 
+      position: relative;
+      z-index: 1;
+    }
+    
+    .header { 
+      text-align: center;
+      padding: 12px 0 16px 0;
+    }
+    
+    .logo-text { 
+      font-size: 20px; 
+      font-weight: 700; 
+      color: var(--navy); 
+      line-height: 1.3;
+      letter-spacing: -0.5px;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+    
+    .card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 20px; margin: 10px 0;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+    }
+    label { 
+      display: block; 
+      font-size: 13px; 
+      font-weight: 600; 
+      margin-bottom: 8px; 
+      color: var(--text-muted); 
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    input, select, button, textarea {
+      width: 100%; padding: 12px; border-radius: 10px;
+      border: 1px solid var(--border); background: var(--bg-card);
+      color: var(--text-primary); font-size: 16px; font-family: inherit;
+    }
+    input, select { height: 52px; }
+    
+    button { 
+      background: var(--accent); 
+      color: white; 
+      font-weight: 600; 
+      border: 0; 
+      cursor: pointer; 
+      height: 52px;  /* was 48px */
+      min-height: 52px;
+      transition: all 0.2s;
+    }
+    button:hover { background: #1d4ed8; }
+    button:active { transform: scale(0.98); }
+    
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .scan-field-wrapper { position: relative; }
+    .scan-field { 
+      font-size: 20px; 
+      font-weight: 600; 
+      padding-right: 40px;
+      transition: opacity 0.2s;
+    }
+    
+    .clear-btn {
+      position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+      background: var(--text-muted); color: white; border-radius: 50%;
+      width: 24px; height: 24px; padding: 0; font-size: 14px; 
+      display: none; align-items: center; justify-content: center;
+      cursor: pointer;
+    }
+    
+    .status {
+      padding: 12px; border-radius: 8px; margin-top: 12px; font-weight: 700;
+      display: none; align-items: center; gap: 8px;
+    }
+    .status.show { display: flex; }
+    .ok { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid var(--success); }
+    .dup { background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid var(--warning); }
+    .err { background: rgba(239, 68, 68, 0.15); color: var(--error); border: 1px solid var(--error); }
+    .queued { background: rgba(37, 99, 235, 0.15); color: var(--accent); border: 1px solid var(--accent); }
+    
+    .last-scan-preview, .history-item {
+      display: flex; align-items: center;
+      gap: 12px; padding: 12px 0;
+    }
+    .history-item {
+      padding: 12px 16px; margin: 8px 0; background: var(--bg-card);
+      border-radius: 8px; border-left: 4px solid var(--accent);
+      border: 1px solid var(--border); border-left-width: 4px;
+      position: relative;
+    }
+    .scan-data-col { flex: 1; min-width: 0; text-align: left; }
+    
+    .data-label { 
+      font-size: 11px; 
+      font-weight: 700; 
+      color: var(--text-muted); 
+      margin-bottom: 4px; 
+      text-transform: uppercase; 
+      letter-spacing: 0.5px; 
+    }
+    .last-scan-part, .history-part-num { font-size: 32px; font-weight: 700; color: var(--text-primary); } /* was 20px */
+    .last-scan-serial, .history-serial-num { font-size: 28px; font-weight: 400; color: var(--text-muted); } /* was 18px */
+    
+    /* SMALLER FONTS FOR HISTORY ITEMS (so they fit better on screen) */
+    .history-item .history-part-num { font-size: 16px; font-weight: 700; }
+    .history-item .history-serial-num { font-size: 14px; font-weight: 400; }
+    
+    .history-status { 
+      display: inline-block;
+      font-weight: 700; font-size: 13px; text-transform: uppercase; 
+      padding: 4px 12px; border-radius: 12px;
+      background: #f3f4f6; color: var(--text-muted);
+    }
+    #lastScanStatus { font-size: 15px; padding: 6px 14px; }
+    .history-time { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
+    
+    .history-panel { margin-top: 12px; max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+    .history-panel.expanded { max-height: 400px; overflow-y: auto; }
+    .history-toggle { 
+      background: transparent; 
+      border: 1px solid var(--border); 
+      color: var(--text-muted); 
+      margin-top: 8px; 
+    }
+    .history-toggle:hover { background: var(--bg-card); color: var(--text-primary); }
+    
+    /* EDIT BUTTON STYLE */
+    .history-edit-btn {
+      background: transparent; color: var(--text-muted); border: none; 
+      font-size: 18px; padding: 8px; cursor: pointer; height: auto; width: auto;
+      margin-left: 8px;
+    }
+    .history-edit-btn:hover { color: var(--accent); background: rgba(37, 99, 235, 0.1); border-radius: 50%; }
+
+    .queue-indicator { 
+      display: inline-flex; 
+      align-items: center; 
+      gap: 6px; 
+      background: var(--accent); 
+      color: white; 
+      padding: 6px 12px; 
+      border-radius: 20px; 
+      font-size: 12px; 
+    }
+    .queue-badge { 
+      background: white; 
+      color: var(--accent); 
+      border-radius: 50%; 
+      width: 20px; 
+      height: 20px; 
+      display: flex; 
+      align-items: center; 
+      justify-content: center; 
+    }
+    
+    .footer { 
+      text-align: center; 
+      padding: 20px 0 24px 0; 
+      color: var(--text-muted); 
+      font-size: 11px; 
+    }
+    
+    .station-lock-wrapper { position: relative; display: flex; align-items: center; width: 100%; }
+    .lock-indicator { 
+      position: absolute; 
+      right: 48px; 
+      top: 50%; 
+      transform: translateY(-50%); 
+      font-size: 18px; 
+      display: none; 
+      pointer-events: none; 
+    }
+    .station-locked { opacity: 0.7; pointer-events: none; background-color: #f9fafb; }
+    .unlock-btn { 
+      position: absolute; 
+      right: 8px; 
+      top: 8px; 
+      bottom: 8px; 
+      height: auto; 
+      width: 36px; 
+      display: none; 
+      background: var(--warning); 
+      border: none; 
+      color: white; 
+      border-radius: 6px; 
+      align-items: center; 
+      justify-content: center; 
+      z-index: 10; 
+    }
+    .lock-btn { 
+      background: var(--success); 
+      color: white; 
+      padding: 0 16px; 
+      margin-top: 8px; 
+      font-size: 14px; 
+      height: 40px; 
+      width: auto; 
+      display: none; 
+      align-items: center; 
+      gap: 6px; 
+    }
+    
+    /* HIDE OPERATOR/STATION ROW WHEN LOCKED */
+    #operatorStationRow.hidden {
+      display: none;
+    }
+    #lockBtn.hidden {
+      display: none !important;
+    }
+
+    /* MODAL STYLES */
+    .modal-overlay {
+      position: fixed; 
+      top: 0; 
+      left: 0; 
+      width: 100%; 
+      height: 100%;
+      background: rgba(0,0,0,0.5); 
+      display: none; 
+      justify-content: center; 
+      align-items: center; 
+      z-index: 100;
+      backdrop-filter: blur(2px);
+    }
+    .modal {
+      background: var(--bg-card); 
+      width: 90%; 
+      max-width: 400px;
+      padding: 24px; 
+      border-radius: 12px; 
+      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    }
+    .modal h3 { 
+      margin-bottom: 16px; 
+      font-size: 18px; 
+      color: var(--text-primary); 
+    }
+    .modal textarea { 
+      width: 100%; 
+      height: 100px; 
+      resize: vertical; 
+      margin-bottom: 16px; 
+    }
+    .modal-actions { 
+      display: flex; 
+      gap: 12px; 
+      justify-content: flex-end; 
+    }
+    .btn-cancel { 
+      background: transparent; 
+      color: var(--text-muted); 
+      border: 1px solid var(--border); 
+    }
+    .btn-save { 
+      background: var(--accent); 
+      color: white; 
+    }
+    
+    /* HELPER TEXT STYLING */
+    .helper-text {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 6px;
+      line-height: 1.4;
+    }
+    /* DIMMER OVERLAY */
+    #dimOverlay {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      background: black;
+      opacity: 0;
+      pointer-events: none; /* Allows clicks to pass through to the app */
+      z-index: 9999;        /* Sits on top of everything */
+      transition: opacity 0.5s ease;
+    }
+  </style>
+</head>
+<body>
+
+<div class="wrap">
+  <!-- COMPACT HEADER -->
+  <div class="header">
+    <div id="netStatus" style="position: fixed; top: 8px; right: 8px; padding: 4px 8px; border-radius: 6px; font-size: 11px; background: var(--success); color: white; z-index: 999;">ONLINE</div>
+    <div class="logo-text">Serial Number Scan Log</div>
+    <div class="subtitle">Polytechnic Resources, Inc.</div>
+  </div>
+
+<!-- OPERATOR & STATION -->
+  <div class="card">
+    <!-- LOCK STATUS BAR -->
+    <div id="lockStatusBar" style="display: none; background: #10b981; color: white; padding: 12px; border-radius: 8px; margin-bottom: 16px; font-weight: 700; text-align: center; font-size: 16px;">
+      🔒 LOCKED: <span id="lockedOperatorDisplay"></span> at <span id="lockedStationDisplay"></span>
+    </div>
+    
+    <div class="row" id="operatorStationRow">
+      <div>
+        <label>Operator Name</label>
+        <select id="operator">
+          <option value="" disabled selected>Select Operator</option>
+          <option>Grace</option><option>Debbie</option><option>Evis</option><option>Laura</option>
+          <option>Mercedes</option><option>Brenda</option><option>Amanda</option>
+          <option>Sarah</option><option>Faye</option><option>Karisha</option>
+          <option>Maria G</option><option>Kiara</option><option>Maria L</option><option>Kathy</option>
+          <option>Althea</option><option>Stephanie</option>
+        </select>
+      </div>
+      <div>
+        <label>Station</label>
+        <select id="station">
+          <option value="MAIN">MAIN</option>
+          <option>OP1</option><option>OP2</option><option>OP3</option><option>OP4</option>
+          <option>OP5</option><option>OP6</option><option>OP7</option><option>OP8</option>
+          <option>OP9</option><option>OP10</option><option>OP11</option><option>OP12</option>
+          <option>OP13</option><option>OP14</option><option>OP15</option><option>OP16</option>
+          <option>OP17</option><option>OP18</option><option>OP19</option><option>OP20</option>
+        </select>
+      </div>
+    </div>
+    
+    <!-- SINGLE LOCK/UNLOCK BUTTON -->
+    <button id="lockBtn" style="display: inline-flex; background: var(--success); color: white; margin-top: 12px; font-size: 16px; height: 56px; align-items: center; justify-content: center; gap: 8px;">
+      🔒 Lock My Info
+    </button>
+    <button id="unlockBtn" style="display: none; background: var(--warning); color: white; margin-top: 12px; font-size: 16px; height: 56px; align-items: center; justify-content: center; gap: 8px;">
+      🔓 Unlock to Change
+    </button>
+  </div>
+
+  <!-- SCAN INPUT -->
+  <div class="card">
+    <label>Scan Barcode Here</label>
+    <div class="scan-field-wrapper">
+      <input id="scan" class="scan-field" placeholder="Focus here and scan" autocomplete="off" autofocus inputmode="none">
+      <button class="clear-btn" id="clearBtn" type="button">×</button>
+    </div>
+    <div class="helper-text">Scanner should auto-submit on Enter key</div>
+    <div id="status" class="status"></div>
+  </div>
+
+  <!-- BATCH COMMENT -->
+  <div class="card">
+    <label>Batch Comment (Applies to all scans)</label>
+    <div class="helper-text" style="margin-bottom: 10px;">
+      Stays active until cleared. Use for notes about multiple items (e.g., "Damaged Box", "Return").
+    </div>
+    
+    <!-- LOCK STATUS FOR BATCH COMMENT -->
+    <div id="batchLockStatus" style="display: none; background: #10b981; color: white; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-weight: 700; font-size: 13px; text-align: center;">
+      🔒 LOCKED: Comment saved for <span id="batchLockOperator"></span>
+    </div>
+    
+    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+      <input id="generalNote" placeholder="e.g. Damaged Box, Return, QC Hold..." autocomplete="off">
+    </div>
+    
+    <div style="display: flex; gap: 8px;">
+      <button id="lockBatchBtn" style="background: var(--success); color: white; flex: 1;">
+        🔒 Lock Comment
+      </button>
+      <button id="clearNoteBtn" style="background: var(--text-muted); color: white; flex: 1;">
+        Clear
+      </button>
+    </div>
+  </div>
+
+  <!-- LAST SCAN CARD -->
+  <div class="card">
+    <label>Last Scan</label>
+    <div class="last-scan-preview" id="lastScanPreview">
+      <div class="scan-data-col">
+        <div class="data-label">Part Number</div>
+        <div class="last-scan-part" id="lastPart">—</div>
+      </div>
+      <div class="scan-data-col">
+        <div class="data-label">Serial Number</div>
+        <div class="last-scan-serial" id="lastSerial">—</div>
+      </div>
+      <div class="scan-data-col">
+        <div class="data-label">Status</div>
+        <div class="history-status" id="lastScanStatus"></div>
+      </div>
+    </div>
+    <div id="queueInfo" style="margin-top:8px;"></div>
+  </div>
+
+  <!-- SCAN HISTORY CARD -->
+  <div class="card">
+    <button class="history-toggle" id="historyToggle">📋 View Scan History</button>
+    <div class="helper-text" style="margin-top: 8px;">
+      Click the ✎ pencil icon to add a correction note to any scan
+    </div>
+    <div class="history-panel" id="historyPanel"></div>
+  </div>
+
+  <div class="footer">
+    © 2025 Polytechnic Resources, Inc. | v8.0.2 (Lock and Dim Fix)
+  </div>
+</div>
+
+<!-- CORRECTION MODAL -->
+<div class="modal-overlay" id="correctionModal">
+  <div class="modal">
+    <h3>✎ Add Correction Note</h3>
+    <div class="helper-text" style="margin-bottom: 12px;" id="modalContext"></div>
+    <textarea id="correctionText" placeholder="Example: Wrong operator, should be Brenda"></textarea>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="cancelCorrection">Cancel</button>
+      <button class="btn-save" id="saveCorrection">Save Note</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<div class="modal-overlay" id="correctionModal">
+   </div>
+
+<div id="dimOverlay"></div>
+
+</body>
+</html>
+</body>
+</html>

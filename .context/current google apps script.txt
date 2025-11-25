@@ -1,0 +1,76 @@
+function myFunction() {
+  
+}
+/**
+ * Web App endpoint for barcode posts from PWA.
+ * Sheet structure: _RAW_DATA with columns:
+ * A timestamp | B station_id | C operator_name | D raw_scan | E part_number
+ * F serial_number | G is_duplicate | H source_workbook | I notes | J validated
+ */
+
+const SHEET_ID = '1kZkCYyRl34SB-_T2E5jAO4dOWf60t5faDJGl_7ACMHo';
+const RAW_SHEET = '_RAW_DATA';
+const SHARED_SECRET = 'qk92X3vE7LrT8c59H1zUM4Bn0ySDFwGp'; // must match PWA
+
+function doPost(e) {
+  try {
+    const body = JSON.parse(e.postData.contents);
+
+    if (body.secret !== SHARED_SECRET) {
+      return reply(403, {status: 'UNAUTHORIZED'});
+    }
+
+    const ss = SpreadsheetApp.openById(SHEET_ID);
+    const sheet = ss.getSheetByName(RAW_SHEET);
+    if (!sheet) return reply(500, {status:'NO_SHEET'});
+
+    // check duplicate
+    const serial = body.serial_number;
+    
+    // Check if a serial was provided. If not, don't check for duplicates (allows logging test scans etc)
+    if (serial) {
+      const found = sheet.getRange('F2:F').createTextFinder(serial).findNext();
+      if (found) return reply(200, {status:'DUPLICATE'});
+    }
+
+    // append new row
+    sheet.appendRow([
+      new Date(),
+      body.station || 'N/A',
+      body.operator || 'N/A',
+      body.raw_scan || '',
+      body.part_number || '',
+      body.serial_number || '',
+      'N',
+      'API',
+      '',
+      ''
+    ]);
+
+    return reply(200, {status:'OK'});
+  } catch (err) {
+    Logger.log(err);
+    return reply(500, {status:'ERROR', message:String(err)});
+  }
+}
+
+function doOptions(e) {
+  return ContentService.createTextOutput('')
+    .setMimeType(ContentService.MimeType.TEXT)
+    .setHeaders(corsHeaders());
+}
+
+function reply(code, obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON)
+    .setHeaders(corsHeaders())
+    .setResponseCode(code);
+}
+
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  };
+}

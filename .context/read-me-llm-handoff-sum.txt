@@ -1,0 +1,270 @@
+📦 Project: SeeScan Cloud Barcode Logger (PWA + Google Sheets)
+Objective
+
+Create a lightweight, cross-device barcode logging system that:
+
+Runs in any browser (including Amazon Fire tablets)
+
+Logs each scan to a central Google Sheet (_RAW_DATA)
+
+Rejects duplicates automatically
+
+Displays live status to the operator
+
+Works even if temporarily offline (queued sync)
+
+Eliminates dependency on Google Sheets onEdit() triggers
+
+⚙️ System Architecture
+Component	Description
+1. Cloudflare Pages (frontend)	Hosts the Progressive Web App (PWA) UI — built from 4 static files (index.html, app.js, manifest.json, service-worker.js).
+2. Google Apps Script (backend API)	Acts as an HTTP endpoint to receive JSON POST requests and append data to _RAW_DATA in the target Google Sheet. Handles duplicate detection, authorization, and CORS headers.
+3. Google Sheet (data store)	Contains _RAW_DATA (append-only log), and optional sheets like ADMIN_DASHBOARD for summaries or visual analytics.
+4. Barcode Scanner	Plug-and-play (USB or Bluetooth). Acts as a keyboard input device sending barcode data followed by Enter.
+5. Fire Tablets or Desktop Browsers	Run the PWA locally, queue offline scans, and auto-resync when connection is restored.
+🧱 Folder & File Layout (Frontend)
+SeeScan-PWA/
+├── index.html           # UI layout (input fields, status, etc.)
+├── app.js               # Core logic, network sync, local storage
+├── manifest.json        # PWA install metadata
+└── service-worker.js    # Offline caching + installability
+
+🌐 Deployment Overview
+1. Google Apps Script (Backend)
+a. Create project
+
+Open your target Google Sheet.
+
+Extensions → Apps Script.
+
+Replace contents with the final code block below.
+
+b. Code essentials
+// CONFIG
+const SHEET_ID = 'YOUR_SHEET_ID_HERE';
+const SHARED_SECRET = 'qk92X3vE7LrT8c59H1zUM4Bn0ySDFwGp';
+
+function doPost(e) {
+  try {
+    const body = JSON.parse(e.postData.contents);
+    if (body.secret !== SHARED_SECRET) return reply(403, {status: 'UNAUTHORIZED'});
+
+    const ss = SpreadsheetApp.openById(SHEET_ID);
+    const sheet = ss.getSheetByName('_RAW_DATA');
+    if (!sheet) return reply(500, {status:'NO_SHEET'});
+
+    // Duplicate check (by Serial)
+    const serial = body.serial_number;
+    const dup = sheet.getRange('F2:F').createTextFinder(serial).findNext();
+    if (dup) return reply(200, {status:'DUPLICATE'});
+
+    sheet.appendRow([
+      new Date(),
+      body.station,
+      body.operator,
+      body.raw_scan,
+      body.part_number,
+      body.serial_number,
+      'N',
+      'API',
+      '',
+      ''
+    ]);
+
+    return reply(200, {status:'OK'});
+  } catch (err) {
+    Logger.log(err);
+    return reply(500, {status:'ERROR', message:String(err)});
+  }
+}
+
+// === CORS + Response Helpers ===
+function doOptions(e) {
+  return ContentService.createTextOutput('')
+    .setMimeType(ContentService.MimeType.TEXT)
+    .setHeaders(corsHeaders());
+}
+function reply(code, obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON)
+    .setHeaders(corsHeaders())
+    .setResponseCode(code);
+}
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  };
+}
+
+c. Deploy as Web App
+
+Deploy → New deployment → Web App
+
+Execute as: Me
+
+Who has access: Anyone
+
+Copy the /exec URL (looks like
+https://script.google.com/macros/s/AKfycbwXXXX/exec)
+
+d. Testing
+
+Use Postman or ReqBin with JSON body:
+
+{"secret":"qk92X3vE7LrT8c59H1zUM4Bn0ySDFwGp","serial_number":"TEST123"}
+
+
+You should receive:
+
+{"status":"OK"}
+
+2. Cloudflare Pages (Frontend Hosting)
+a. Create site
+
+Go to Cloudflare Pages
+
+“Create a project → Upload assets directly”
+
+Upload:
+
+index.html
+app.js
+manifest.json
+service-worker.js
+
+
+Click Upload and Deploy
+
+Note the public URL, e.g.
+https://seescan-yourname.pages.dev
+
+b. Updating
+
+Whenever you modify a file (especially app.js), redeploy:
+
+Go to Manage Project → Upload new build.
+
+Re-upload your updated files.
+
+3. PWA Configuration (Frontend Logic)
+Core file: app.js
+
+Handles:
+
+Operator + Station preferences via localStorage
+
+Barcode parsing into part/serial
+
+JSON POST to Apps Script endpoint
+
+Local queue for offline sync
+
+UI feedback messages
+
+Key line to edit when moving projects:
+
+const ENDPOINT = 'https://script.google.com/macros/s/AKfycbwXXXX/exec';
+
+manifest.json
+
+Defines install name/icon:
+
+{
+  "name": "SeeScan",
+  "short_name": "SeeScan",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000",
+  "theme_color": "#000",
+  "icons": []
+}
+
+service-worker.js
+
+Caches files for offline use.
+
+🧾 Google Sheet Structure
+Column	Field name	Description
+A	Timestamp	new Date() when received
+B	Station	e.g. “OP1”
+C	Operator	from PWA input
+D	Raw Scan	original scanned text
+E	Part Number	parsed from scan
+F	Serial Number	parsed from scan
+G	Is Duplicate	“Y” or “N”
+H	Source	“API”
+I	Notes	optional manual field
+J	Validated	optional QA field
+
+Optional additional sheets:
+
+ADMIN_DASHBOARD — use formulas like =COUNTIF(_RAW_DATA!G:G,"N")
+
+QC_STATS — real-time status dashboards.
+
+🔒 Security Model
+Mechanism	Purpose
+Shared secret (SHARED_SECRET)	Prevents public users from posting data to the API. Both PWA and Apps Script must share the same value.
+CORS headers	Allow only browser requests; required for Pages→Apps Script communication.
+Access control	Web App set to “Anyone” but validated via secret.
+🔍 Troubleshooting
+Symptom	Cause	Fix
+PWA shows OFFLINE — queued	Browser blocked CORS request	Ensure Apps Script includes corsHeaders() and redeploy
+Console error No Access-Control-Allow-Origin	Same as above	Redeploy after adding headers
+TypeError: Cannot read properties of undefined (reading 'source')	Trying to run Apps Script onEdit manually	Only the Web App receives HTTP requests
+Duplicate scans logged twice	Scanner sends two “Enter” keys	Check scanner suffix configuration; should send only one Enter
+Unauthorized	Secret mismatch	Ensure both ends use the same SHARED_SECRET string
+No updates visible	Old deployment still active	“Manage deployments → New version → Deploy”
+🧭 Operational Flow
+
+Operator opens https://seescan-yourname.pages.dev
+
+Enters name + selects station
+
+Focuses on scan field
+
+Barcode scanner inputs text + Enter
+
+PWA parses → part_number, serial_number
+
+Sends JSON → Apps Script Web App
+
+Apps Script validates + logs to _RAW_DATA
+
+Returns {status:'OK'} or {status:'DUPLICATE'}
+
+UI flashes feedback color (green/red)
+
+If offline → queues locally → resends automatically when online
+
+💡 Future Extensions
+
+Authentication via Google Identity for operator tracking
+
+Real-time dashboard using Google Visualization API or Data Studio
+
+CSV export / automated sync to external ERP or QuickBooks
+
+Admin control panel in the same PWA (list of recent scans, stats, etc.)
+
+QR generation for tracking parts
+
+Tablet kiosk mode using Chrome managed devices
+
+✅ Summary
+Layer	Technology	Responsibility
+UI	HTML + JS (Cloudflare Pages)	Input, feedback, offline queue
+Transport	HTTPS JSON POST	Secure payload to Apps Script
+Backend	Google Apps Script	Validation, deduplication, logging
+Storage	Google Sheets	Central, live data store
+Hardware	Barcode scanner	Simulates keyboard input
+
+Ownership:
+
+Frontend (PWA): update via Cloudflare Pages → re-upload files.
+
+Backend (Apps Script): maintain CORS + secret, redeploy on change.
+
+Sheet: _RAW_DATA is permanent storage; dashboards can evolve freely.
