@@ -232,38 +232,7 @@ function checkLocalDuplicate(serial) {
   return h.some(item => item.serial === serial && item.status !== 'ERR' && item.status !== 'ERROR');
 }
 
-// === NEW: Update a specific history item's status after background upload ===
-function updateHistoryStatus(serial, newStatus) {
-  const key = getHistoryKey();
-  let h = getHistory();
-  const index = h.findIndex(i => i.serial === serial);
-  
-  if (index !== -1) {
-    h[index].status = newStatus;
-    localStorage.setItem(key, JSON.stringify(h));
-    renderHistory(); // Refresh the list to show the green badge
-  }
-  
-  // Also update Last Scan display if it matches
-  const lastScanKey = getLastScanKey();
-  const lastScanData = localStorage.getItem(lastScanKey);
-  if (lastScanData) {
-    try {
-      const data = JSON.parse(lastScanData);
-      if (data.serial === serial) {
-        data.status = newStatus;
-        localStorage.setItem(lastScanKey, JSON.stringify(data));
-        // Update the display
-        lastScanStatus.textContent = newStatus;
-        if (newStatus === 'OK') {
-          lastScanStatus.style.cssText = 'background:#d1fae5; color:#065f46;';
-        } else if (newStatus === 'DUPLICATE') {
-          lastScanStatus.style.cssText = 'background:#fef3c7; color:#92400e;';
-        }
-      }
-    } catch (e) {}
-  }
-}
+// Status updates now happen immediately in scan handler - no queue to reconcile
 
 function getLastScanKey() { 
   const op = operatorInput.value.trim() || 'UNNAMED';
@@ -299,12 +268,10 @@ function loadLastScan() {
   lastScanStatus.textContent = '';
 }
 
-function getQueue() { return JSON.parse(localStorage.getItem('queue') || '[]'); }
-function setQueue(q) { localStorage.setItem('queue', JSON.stringify(q)); renderQueue(); }
-function enqueue(item) { const q = getQueue(); q.push(item); setQueue(q); }
+// Queue removed - scanning blocked when offline
 function renderQueue() {
-  const q = getQueue();
-  queueInfo.innerHTML = q.length ? `<span class="queue-indicator"><span class="queue-badge">${q.length}</span> Pending</span>` : '';
+  // No longer using queue system
+  queueInfo.innerHTML = '';
 }
 
 function getHistoryKey() { return `history_${operatorInput.value.trim() || 'UNNAMED'}`; }
@@ -372,8 +339,8 @@ async function checkConnectivity() {
   }
 }
 
-// === FIX 1: Robust Send Function ===
-async function send(payload, fromQueue = false) {
+// === Send Function - No queue mode ===
+async function send(payload) {
   const startTime = Date.now();
   
   try {
@@ -402,23 +369,11 @@ async function send(payload, fromQueue = false) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`✅ Scan saved in ${elapsed}s - Response received:`, data);
 
-    const status = data.status;
-
     // Mark server as reachable
     isServerReachable = true;
     updateNetworkStatus(true);
 
-    if (status === 'OK' || status === 'DUPLICATE') {
-      if (!fromQueue) {
-        if (status === 'OK') playSoundSuccess(); else playSoundDuplicate();
-        show(`✅ SAVED (${elapsed}s)`, status === 'OK' ? 'ok' : 'dup');
-      } else {
-        console.log(`Background upload result for ${payload.serial_number}: ${status}`);
-      }
-      return status;
-    }
-
-    return status;
+    return data.status || 'ERROR';
 
   } catch (e) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -428,14 +383,6 @@ async function send(payload, fromQueue = false) {
     isServerReachable = false;
     updateNetworkStatus(false);
     
-    if (!fromQueue) {
-      if (elapsed >= 29) {
-        show('⏳ Slow Network - Saved for Later', 'queued');
-      } else {
-        show('📡 No Connection - Saved for Later', 'queued');
-      }
-      playSoundError();
-    }
     return 'OFFLINE';
   }
 }
@@ -450,6 +397,14 @@ scanInput.addEventListener('keydown', async (ev) => {
   // PREVENT DOUBLE SCANS - Critical fix!
   if (isProcessing) {
     playSoundError();
+    return;
+  }
+  
+  // === BLOCK SCANNING WHEN OFFLINE ===
+  if (!isServerReachable) {
+    playSoundError();
+    show('❌ OFFLINE - Swipe down to refresh', 'err');
+    scanInput.value = '';
     return;
   }
   
@@ -500,28 +455,40 @@ scanInput.addEventListener('keydown', async (ev) => {
     comment: $('#generalNote').value.trim()
   };
 
-  // Send in background
+  // Send and wait for response
   const status = await send(payload);
   
-  // Update final status
-  let statusClass = 'ok';
-  if (status === 'DUPLICATE') statusClass = 'dup';
-  if (status === 'OFFLINE' || status === 'ERROR') statusClass = 'queued';
-  
+  // Update final status based on ACTUAL server response
   lastScanStatus.textContent = status;
   lastScanStatus.className = 'history-status';
   
-  if (status === 'OK') lastScanStatus.style.cssText = 'background:#d1fae5; color:#065f46;';
-  else if (status === 'DUPLICATE') lastScanStatus.style.cssText = 'background:#fef3c7; color:#92400e;';
-  else lastScanStatus.style.cssText = 'background:#fee2e2; color:#991b1b;';
+  if (status === 'OK') {
+    lastScanStatus.style.cssText = 'background:#d1fae5; color:#065f46;';
+    playSoundSuccess();
+    show('✅ SAVED', 'ok');
+  } else if (status === 'DUPLICATE') {
+    lastScanStatus.style.cssText = 'background:#fef3c7; color:#92400e;';
+    playSoundDuplicate();
+    show('⚠️ DUPLICATE', 'dup');
+  } else {
+    // OFFLINE or ERROR - scan failed
+    lastScanStatus.style.cssText = 'background:#fee2e2; color:#991b1b;';
+    lastScanStatus.textContent = 'FAILED';
+    playSoundError();
+    show('❌ FAILED - Try again when online', 'err');
+    // Don't add to history if it failed
+    isProcessing = false;
+    scanInput.disabled = false;
+    scanInput.style.opacity = '1';
+    scanInput.focus();
+    return;
+  }
 
-  // Add to history using CLEANED serial
+  // Only add to history if scan was successful (OK or DUPLICATE)
   addToHistory({ part: cleanedPart, serial: cleanedSerial, status, timestamp: new Date() });
   
   // Save last scan to localStorage (per operator/station)
   saveLastScan(cleanedPart, cleanedSerial, status);
-  
-  if (status === 'OFFLINE') enqueue(payload);
 
   // === UNLOCK SCANNING ===
   isProcessing = false;
@@ -531,38 +498,7 @@ scanInput.addEventListener('keydown', async (ev) => {
 });
 
 
-// === UPDATED: Process the queue in background ===
-async function drainQueue() {
-  const q = getQueue();
-  if (!q.length) return;
-
-  const nextItem = q[0];
-  
-  // Update UI to show we are working on it (optional, mainly for debugging)
-  console.log(`📤 Background uploading: ${nextItem.serial_number}...`);
-
-  // Send with fromQueue = true (suppresses sounds)
-  const status = await send(nextItem, true);
-
-  // If successful or hard duplicate, remove from queue and update history
-  if (status === 'OK' || status === 'DUPLICATE') {
-    // 1. Update the visual history list
-    updateHistoryStatus(nextItem.serial_number, status);
-    
-    // 2. Remove from queue
-    q.shift();
-    setQueue(q);
-    
-    // 3. Process next item with delay
-    setTimeout(drainQueue, 1000); 
-  } else if (status === 'ERROR') {
-      // If hard error, keep in queue to retry
-      console.log('Will retry later...');
-  }
-}
-
-// Run queue check every 5 seconds (more frequent than before)
-setInterval(drainQueue, 5000);
+// Queue system removed - scans only allowed when online
 
 clearBtn.onclick = () => { scanInput.value=''; clearBtn.style.display='none'; scanInput.focus(); };
 scanInput.oninput = () => clearBtn.style.display = scanInput.value ? 'flex' : 'none';
@@ -708,26 +644,33 @@ function updateNetworkStatus(online) {
   isServerReachable = online;
   const net = document.getElementById('netStatus');
   const offlineWarning = document.getElementById('offlineWarning');
+  const scanField = document.getElementById('scan');
   
   if (online) {
     net.textContent = 'ONLINE';
     net.style.background = 'var(--success)';
     if (offlineWarning) offlineWarning.classList.remove('show');
-    drainQueue();
+    // Re-enable scan input
+    if (scanField && !isProcessing) {
+      scanField.disabled = false;
+      scanField.style.opacity = '1';
+      scanField.placeholder = 'Focus here and scan';
+    }
   } else {
     net.textContent = 'OFFLINE';
     net.style.background = 'var(--error)';
     if (offlineWarning) offlineWarning.classList.add('show');
+    // Disable scan input when offline
+    if (scanField) {
+      scanField.disabled = true;
+      scanField.style.opacity = '0.5';
+      scanField.placeholder = 'OFFLINE - Swipe down to refresh';
+    }
   }
 }
 
-// Offline warning banner - tap to refresh
-const offlineWarning = document.getElementById('offlineWarning');
-if (offlineWarning) {
-  offlineWarning.addEventListener('click', () => {
-    location.reload();
-  });
-}
+// Offline warning banner - just informational now (swipe down to refresh)
+// No tap handler needed
 
 window.addEventListener('online', () => updateNetworkStatus(true));
 window.addEventListener('offline', () => updateNetworkStatus(false));
@@ -930,7 +873,7 @@ updateLock();
 document.body.addEventListener('touchstart', unlockAudioOnFirstTap);
 
 scanInput.focus();
-console.log('SeeScan Test v8.0.5 (UI Cleanup)');
+console.log('SeeScan Test v8.0.6 (No Offline Queue)');
 
 // === BATTERY STATUS API ===
 
@@ -1036,7 +979,7 @@ let isDimmed = false;
 function simpleDim() {
   if (!isDimmed) {
     const overlay = document.getElementById('dimOverlay');
-    if (overlay) overlay.style.opacity = '0.6'; // 60% Darker
+    if (overlay) overlay.style.opacity = '0.85'; // 85% Darker
     isDimmed = true;
     console.log('🔅 Screen dimmed');
   }
@@ -1054,7 +997,7 @@ function simpleBrighten() {
 
 function resetDimTimer() {
   clearTimeout(dimTimer);
-  dimTimer = setTimeout(simpleDim, 60000); // 60 seconds = 1 minute
+  dimTimer = setTimeout(simpleDim, 90000); // 90 seconds = 1.5 minutes
 }
 
 // Detect activity and reset timer
