@@ -982,7 +982,67 @@ updateLock();
 document.body.addEventListener('touchstart', unlockAudioOnFirstTap);
 
 scanInput.focus();
-console.log('SeeScan v8.0.2 (Lock and Dim Fix)');
+console.log('SeeScan Test v8.0.3 (LBattery API)');
+
+// === BATTERY STATUS API ===
+
+function updateBatteryInfo(battery) {
+  const statusContainer = document.getElementById('battery-status');
+  const levelText = document.getElementById('battery-level-text');
+  
+  // Show the container once we successfully get battery data
+  if (statusContainer) {
+    statusContainer.style.display = 'block';
+  }
+
+  if (levelText) {
+    const percentage = Math.round(battery.level * 100);
+    const chargingStatus = battery.charging ? '⚡️ Charging' : 'Discharging';
+    
+    levelText.textContent = `Battery: ${percentage}% (${chargingStatus})`;
+    
+    // Optional: Change background color based on level
+    if (percentage < 20 && !battery.charging) {
+      statusContainer.style.backgroundColor = '#fecaca'; // Red for low battery
+    } else if (battery.charging) {
+      statusContainer.style.backgroundColor = '#d1fae5'; // Green for charging
+    } else {
+      statusContainer.style.backgroundColor = '#e5e7eb'; // Default gray
+    }
+  }
+}
+
+async function startBatteryMonitoring() {
+  if ('getBattery' in navigator) {
+    try {
+      const battery = await navigator.getBattery();
+      
+      // Initial update
+      updateBatteryInfo(battery);
+
+      // Listen for changes
+      battery.addEventListener('levelchange', () => updateBatteryInfo(battery));
+      battery.addEventListener('chargingchange', () => updateBatteryInfo(battery));
+      
+      console.log('✅ Battery Status API monitoring started.');
+
+    } catch (error) {
+      console.warn('Battery Status API failed to access device battery. Check webkiosk app settings.', error);
+      // Fallback for cases where the API is blocked/unavailable
+      const statusContainer = document.getElementById('battery-status');
+      if (statusContainer) {
+        statusContainer.style.display = 'block';
+        document.getElementById('battery-level-text').textContent = 'Battery Status Unavailable';
+        statusContainer.style.backgroundColor = '#fee2e2';
+      }
+    }
+  } else {
+    console.warn('❌ navigator.getBattery() not supported in this browser/webview.');
+  }
+}
+
+// Call this on initialization in your app.js
+startBatteryMonitoring();
 
 // SERVICE WORKER REGISTRATION - ADD THIS AT THE END OF app.js
 if ('serviceWorker' in navigator) {

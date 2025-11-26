@@ -1,4 +1,4 @@
-const CACHE_NAME = 'seescan-v85';
+const CACHE_NAME = 'seescan-v86';
 const urlsToCache = [
   './',
   'index.html',
