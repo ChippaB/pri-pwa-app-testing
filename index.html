@@ -29,50 +29,14 @@
       overflow-x: hidden;
     }
     
-    /* SUBTLE BACKGROUND LOGO */
-    body::before {
-      content: '';
-      position: fixed;
-      top: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 350px;
-      height: 150px;
-      background-image: url('polytechnic logo 678 x 297.png');
-      background-size: contain;
-      background-repeat: no-repeat;
-      background-position: center;
-      opacity: 0.06;
-      z-index: 0;
-      pointer-events: none;
-      filter: blur(1px);
-    }
-    
     .wrap { 
       width: 100%; 
       max-width: 600px;
       margin: 0 auto; 
       padding: 12px; 
+      padding-top: 4px;
       position: relative;
       z-index: 1;
-    }
-    
-    .header { 
-      text-align: center;
-      padding: 12px 0 16px 0;
-    }
-    
-    .logo-text { 
-      font-size: 20px; 
-      font-weight: 700; 
-      color: var(--navy); 
-      line-height: 1.3;
-      letter-spacing: -0.5px;
-    }
-    .subtitle {
-      font-size: 13px;
-      color: var(--text-muted);
-      margin-top: 4px;
     }
     
     .card {
@@ -103,20 +67,41 @@
       font-weight: 600; 
       border: 0; 
       cursor: pointer; 
-      height: 52px;  /* was 48px */
+      height: 52px;
       min-height: 52px;
       transition: all 0.2s;
     }
     button:hover { background: #1d4ed8; }
     button:active { transform: scale(0.98); }
     
+    /* Compact button style - only as wide as needed */
+    .btn-compact {
+      width: auto;
+      padding: 0 20px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      height: 48px;
+      min-height: 48px;
+    }
+    
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .scan-field-wrapper { position: relative; }
+    
+    /* Enhanced scan field focus highlight */
     .scan-field { 
       font-size: 20px; 
       font-weight: 600; 
       padding-right: 40px;
-      transition: opacity 0.2s;
+      transition: all 0.2s;
+      border: 2px solid var(--border);
+    }
+    .scan-field:focus {
+      border-color: var(--accent);
+      outline: none;
+      box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.3);
+      background: #f0f7ff;
     }
     
     .clear-btn {
@@ -137,15 +122,33 @@
     .err { background: rgba(239, 68, 68, 0.15); color: var(--error); border: 1px solid var(--error); }
     .queued { background: rgba(37, 99, 235, 0.15); color: var(--accent); border: 1px solid var(--accent); }
     
-    .last-scan-preview, .history-item {
-      display: flex; align-items: center;
-      gap: 12px; padding: 12px 0;
+    /* Last Scan Card - prevent overlap with flex wrap */
+    .last-scan-preview {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 12px 0;
     }
+    .last-scan-preview .scan-data-col {
+      flex: 1 1 auto;
+      min-width: 100px;
+    }
+    /* Make part and serial stack vertically if needed */
+    .last-scan-preview .scan-data-col:nth-child(1),
+    .last-scan-preview .scan-data-col:nth-child(2) {
+      flex: 1 1 45%;
+    }
+    .last-scan-preview .scan-data-col:nth-child(3) {
+      flex: 0 0 auto;
+    }
+    
     .history-item {
+      display: flex; align-items: center;
       padding: 12px 16px; margin: 8px 0; background: var(--bg-card);
       border-radius: 8px; border-left: 4px solid var(--accent);
       border: 1px solid var(--border); border-left-width: 4px;
       position: relative;
+      gap: 12px;
     }
     .scan-data-col { flex: 1; min-width: 0; text-align: left; }
     
@@ -157,12 +160,23 @@
       text-transform: uppercase; 
       letter-spacing: 0.5px; 
     }
-    .last-scan-part, .history-part-num { font-size: 32px; font-weight: 700; color: var(--text-primary); } /* was 20px */
-    .last-scan-serial, .history-serial-num { font-size: 28px; font-weight: 400; color: var(--text-muted); } /* was 18px */
     
-    /* SMALLER FONTS FOR HISTORY ITEMS (so they fit better on screen) */
-    .history-item .history-part-num { font-size: 16px; font-weight: 700; }
-    .history-item .history-serial-num { font-size: 14px; font-weight: 400; }
+    /* Auto-fit text for last scan */
+    .last-scan-part, .last-scan-serial { 
+      font-weight: 700; 
+      color: var(--text-primary);
+      word-break: break-word;
+      overflow-wrap: break-word;
+      font-size: clamp(18px, 5vw, 28px);
+    }
+    .last-scan-serial {
+      font-weight: 400;
+      color: var(--text-muted);
+    }
+    
+    /* History items smaller */
+    .history-part-num { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+    .history-serial-num { font-size: 14px; font-weight: 400; color: var(--text-muted); }
     
     .history-status { 
       display: inline-block;
@@ -183,7 +197,6 @@
     }
     .history-toggle:hover { background: var(--bg-card); color: var(--text-primary); }
     
-    /* EDIT BUTTON STYLE */
     .history-edit-btn {
       background: transparent; color: var(--text-muted); border: none; 
       font-size: 18px; padding: 8px; cursor: pointer; height: auto; width: auto;
@@ -219,52 +232,9 @@
       font-size: 11px; 
     }
     
-    .station-lock-wrapper { position: relative; display: flex; align-items: center; width: 100%; }
-    .lock-indicator { 
-      position: absolute; 
-      right: 48px; 
-      top: 50%; 
-      transform: translateY(-50%); 
-      font-size: 18px; 
-      display: none; 
-      pointer-events: none; 
-    }
-    .station-locked { opacity: 0.7; pointer-events: none; background-color: #f9fafb; }
-    .unlock-btn { 
-      position: absolute; 
-      right: 8px; 
-      top: 8px; 
-      bottom: 8px; 
-      height: auto; 
-      width: 36px; 
-      display: none; 
-      background: var(--warning); 
-      border: none; 
-      color: white; 
-      border-radius: 6px; 
-      align-items: center; 
-      justify-content: center; 
-      z-index: 10; 
-    }
-    .lock-btn { 
-      background: var(--success); 
-      color: white; 
-      padding: 0 16px; 
-      margin-top: 8px; 
-      font-size: 14px; 
-      height: 40px; 
-      width: auto; 
-      display: none; 
-      align-items: center; 
-      gap: 6px; 
-    }
-    
     /* HIDE OPERATOR/STATION ROW WHEN LOCKED */
     #operatorStationRow.hidden {
       display: none;
-    }
-    #lockBtn.hidden {
-      display: none !important;
     }
 
     /* MODAL STYLES */
@@ -315,13 +285,13 @@
       color: white; 
     }
     
-    /* HELPER TEXT STYLING */
     .helper-text {
       font-size: 11px;
       color: var(--text-muted);
       margin-top: 6px;
       line-height: 1.4;
     }
+    
     /* DIMMER OVERLAY */
     #dimOverlay {
       position: fixed;
@@ -329,33 +299,71 @@
       width: 100vw; height: 100vh;
       background: black;
       opacity: 0;
-      pointer-events: none; /* Allows clicks to pass through to the app */
-      z-index: 9999;        /* Sits on top of everything */
+      pointer-events: none;
+      z-index: 9999;
       transition: opacity 0.5s ease;
+    }
+    
+    /* Batch comment buttons container */
+    .batch-btn-row {
+      display: flex;
+      gap: 12px;
+      justify-content: flex-start;
+    }
+    .batch-btn-row button {
+      width: auto;
+      padding: 0 20px;
+      flex: 0 0 auto;
+    }
+    
+    /* Network status badge */
+    #netStatus {
+      position: fixed; 
+      top: 8px; 
+      right: 8px; 
+      padding: 4px 8px; 
+      border-radius: 6px; 
+      font-size: 11px; 
+      background: var(--success); 
+      color: white; 
+      z-index: 999;
+    }
+    
+    /* Offline warning banner */
+    #offlineWarning {
+      display: none;
+      background: var(--error);
+      color: white;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      font-weight: 700;
+      text-align: center;
+      font-size: 14px;
+    }
+    #offlineWarning.show {
+      display: block;
     }
   </style>
 </head>
 <body>
 
 <div class="wrap">
-  <!-- COMPACT HEADER -->
-  <div class="header">
-    <div id="netStatus" style="position: fixed; top: 8px; right: 8px; padding: 4px 8px; border-radius: 6px; font-size: 11px; background: var(--success); color: white; z-index: 999;">ONLINE</div>
-    <div class="logo-text">Serial Number Scan Log</div>
-    <div class="subtitle">Polytechnic Resources, Inc.</div>
+  <!-- Network status badge -->
+  <div id="netStatus">ONLINE</div>
+  
+  <!-- Offline warning banner -->
+  <div id="offlineWarning">
+    ⚠️ OFFLINE - Tap here to refresh and reconnect
   </div>
 
-<div id="battery-status" class="card" style="padding: 8px; text-align: center; display: none; margin-bottom: 12px; background-color: #e5e7eb;">
-  🔋 <span id="battery-level-text">...</span>
-</div>
+  <!-- Battery Status -->
+  <div id="battery-status" class="card" style="padding: 8px; text-align: center; display: none; margin-bottom: 12px; background-color: #e5e7eb;">
+    🔋 <span id="battery-level-text">...</span>
+  </div>
 
-<!-- OPERATOR & STATION -->
+  <!-- OPERATOR & STATION -->
   <div class="card">
-    <!-- LOCK STATUS BAR -->
-    <div id="lockStatusBar" style="display: none; background: #10b981; color: white; padding: 12px; border-radius: 8px; margin-bottom: 16px; font-weight: 700; text-align: center; font-size: 16px;">
-      🔒 LOCKED: <span id="lockedOperatorDisplay"></span> at <span id="lockedStationDisplay"></span>
-    </div>
-    
     <div class="row" id="operatorStationRow">
       <div>
         <label>Operator Name</label>
@@ -381,17 +389,19 @@
       </div>
     </div>
     
-    <!-- SINGLE LOCK/UNLOCK BUTTON -->
-    <button id="lockBtn" style="display: inline-flex; background: var(--success); color: white; margin-top: 12px; font-size: 16px; height: 56px; align-items: center; justify-content: center; gap: 8px;">
-      🔒 Lock My Info
-    </button>
-    <button id="unlockBtn" style="display: none; background: var(--warning); color: white; margin-top: 12px; font-size: 16px; height: 56px; align-items: center; justify-content: center; gap: 8px;">
-      🔓 Unlock to Change
-    </button>
+    <!-- Compact Lock/Unlock Button -->
+    <div style="margin-top: 12px;">
+      <button id="lockBtn" class="btn-compact" style="background: var(--success);">
+        🔒 Lock My Info
+      </button>
+      <button id="unlockBtn" class="btn-compact" style="display: none; background: var(--warning);">
+        🔓 Unlock to Change
+      </button>
+    </div>
   </div>
 
   <!-- SCAN INPUT -->
-  <div class="card">
+  <div class="card" id="scanCard">
     <label>Scan Barcode Here</label>
     <div class="scan-field-wrapper">
       <input id="scan" class="scan-field" placeholder="Focus here and scan" autocomplete="off" autofocus inputmode="none">
@@ -413,15 +423,15 @@
       🔒 LOCKED: Comment saved for <span id="batchLockOperator"></span>
     </div>
     
-    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+    <div style="margin-bottom: 8px;">
       <input id="generalNote" placeholder="e.g. Damaged Box, Return, QC Hold..." autocomplete="off">
     </div>
     
-    <div style="display: flex; gap: 8px;">
-      <button id="lockBatchBtn" style="background: var(--success); color: white; flex: 1;">
+    <div class="batch-btn-row">
+      <button id="lockBatchBtn" class="btn-compact" style="background: var(--success);">
         🔒 Lock Comment
       </button>
-      <button id="clearNoteBtn" style="background: var(--text-muted); color: white; flex: 1;">
+      <button id="clearNoteBtn" class="btn-compact" style="background: var(--text-muted);">
         Clear
       </button>
     </div>
@@ -457,7 +467,7 @@
   </div>
 
   <div class="footer">
-    © 2025 Polytechnic Resources, Inc. | Test v8.0.4 (Offline Fix)
+    © 2025 Polytechnic Resources, Inc. | Test v8.0.5
   </div>
 </div>
 
@@ -474,13 +484,8 @@
   </div>
 </div>
 
-<script src="app.js"></script>
-<div class="modal-overlay" id="correctionModal">
-   </div>
-
 <div id="dimOverlay"></div>
 
-</body>
-</html>
+<script src="app.js"></script>
 </body>
 </html>

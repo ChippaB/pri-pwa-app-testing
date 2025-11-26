@@ -243,6 +243,26 @@ function updateHistoryStatus(serial, newStatus) {
     localStorage.setItem(key, JSON.stringify(h));
     renderHistory(); // Refresh the list to show the green badge
   }
+  
+  // Also update Last Scan display if it matches
+  const lastScanKey = getLastScanKey();
+  const lastScanData = localStorage.getItem(lastScanKey);
+  if (lastScanData) {
+    try {
+      const data = JSON.parse(lastScanData);
+      if (data.serial === serial) {
+        data.status = newStatus;
+        localStorage.setItem(lastScanKey, JSON.stringify(data));
+        // Update the display
+        lastScanStatus.textContent = newStatus;
+        if (newStatus === 'OK') {
+          lastScanStatus.style.cssText = 'background:#d1fae5; color:#065f46;';
+        } else if (newStatus === 'DUPLICATE') {
+          lastScanStatus.style.cssText = 'background:#fef3c7; color:#92400e;';
+        }
+      }
+    } catch (e) {}
+  }
 }
 
 function getLastScanKey() { 
@@ -307,7 +327,7 @@ function renderHistory() {
     div.className = 'history-item';
     let statusClass = (item.status || 'ERR').toLowerCase();
     if (statusClass.includes('dup')) statusClass = 'dup';
-    else if (statusClass.includes('off') || statusClass.includes('err')) statusClass = 'queued';
+    else if (statusClass.includes('off') || statusClass.includes('err') || statusClass.includes('pend') || statusClass.includes('queue')) statusClass = 'queued';
     else statusClass = 'ok';
     
     let badgeStyle = '';
@@ -327,6 +347,29 @@ function renderHistory() {
     `;
     historyPanel.appendChild(div);
   });
+}
+
+// === CONNECTIVITY CHECK - Verify server is reachable before scanning ===
+let isServerReachable = true;
+let lastConnectivityCheck = 0;
+
+async function checkConnectivity() {
+  try {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(ENDPOINT + '?ping=1', { 
+      method: 'GET', 
+      cache: 'no-cache',
+      signal: controller.signal 
+    });
+    isServerReachable = res.ok;
+    lastConnectivityCheck = Date.now();
+    return isServerReachable;
+  } catch {
+    isServerReachable = false;
+    lastConnectivityCheck = Date.now();
+    return false;
+  }
 }
 
 // === FIX 1: Robust Send Function ===
@@ -361,20 +404,18 @@ async function send(payload, fromQueue = false) {
 
     const status = data.status;
 
-    if (status === 'OK' || status === 'DUPLICATE') {
-      if (status === 'OK') playSoundSuccess(); else playSoundDuplicate();
-      if (!fromQueue) show(`✅ SAVED (${elapsed}s)`, status === 'OK' ? 'ok' : 'dup');
-      return status;
-    }
+    // Mark server as reachable
+    isServerReachable = true;
+    updateNetworkStatus(true);
 
-    // LOGIC CHANGE: Only play sounds/show main status if NOT from background queue
-    if (!fromQueue) {
-        if (status === 'OK') playSoundSuccess();
-        else playSoundDuplicate();
+    if (status === 'OK' || status === 'DUPLICATE') {
+      if (!fromQueue) {
+        if (status === 'OK') playSoundSuccess(); else playSoundDuplicate();
         show(`✅ SAVED (${elapsed}s)`, status === 'OK' ? 'ok' : 'dup');
-    } else {
-        // Background mode: Console log only
+      } else {
         console.log(`Background upload result for ${payload.serial_number}: ${status}`);
+      }
+      return status;
     }
 
     return status;
@@ -383,14 +424,18 @@ async function send(payload, fromQueue = false) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.error("Fetch failed after " + elapsed + "s:", e.message || e);
     
+    // Mark server as unreachable
+    isServerReachable = false;
+    updateNetworkStatus(false);
+    
     if (!fromQueue) {
       if (elapsed >= 29) {
         show('⏳ Slow Network - Saved for Later', 'queued');
       } else {
         show('📡 No Connection - Saved for Later', 'queued');
       }
+      playSoundError();
     }
-    playSoundError();
     return 'OFFLINE';
   }
 }
@@ -442,7 +487,7 @@ scanInput.addEventListener('keydown', async (ev) => {
   // Update display immediately (optimistic UI)
   lastPart.textContent = cleanedPart || 'N/A';
   lastSerial.textContent = cleanedSerial;
-  lastScanStatus.textContent = 'PROCESSING';
+  lastScanStatus.textContent = 'SENDING';
   lastScanStatus.style.cssText = 'background:#dbeafe; color:#1e40af;';
   
   const payload = {
@@ -508,11 +553,11 @@ async function drainQueue() {
     q.shift();
     setQueue(q);
     
-    // 3. Process next item immediately
+    // 3. Process next item with delay
     setTimeout(drainQueue, 1000); 
   } else if (status === 'ERROR') {
-      // If hard error, maybe keep in queue or move to error state? 
-      // For now, we keep it to retry, but you could add logic to skip after X retries
+      // If hard error, keep in queue to retry
+      console.log('Will retry later...');
   }
 }
 
@@ -526,25 +571,13 @@ scanInput.oninput = () => clearBtn.style.display = scanInput.value ? 'flex' : 'n
 const clearNoteBtn = document.querySelector('#clearNoteBtn');
 // Show visual indicator when batch comment is active
 const generalNoteInput = $('#generalNote');
-const scanCard = document.querySelector('.card'); // The scan input card
 
-generalNoteInput.addEventListener('input', () => {
-  const scanCards = document.querySelectorAll('.card');
-  const scanInputCard = scanCards[2]; // Third card is scan input
-  
-  if (generalNoteInput.value.trim()) {
-    scanInputCard.style.borderLeft = '6px solid #f59e0b';
-    scanInputCard.style.background = '#fffbeb';
-  } else {
-    scanInputCard.style.borderLeft = '';
-    scanInputCard.style.background = '';
-  }
-});
+// REMOVED: Orange highlight on scan card when batch comment is entered
+// This was confusing operators
 
 if (clearNoteBtn && generalNoteInput) {
   clearNoteBtn.onclick = () => {
     generalNoteInput.value = ''; 
-    generalNoteInput.dispatchEvent(new Event('input')); // Trigger visual reset
     generalNoteInput.focus();
   };
 }
@@ -574,9 +607,6 @@ function loadBatchComment() {
   } else {
     updateBatchLockUI(false);
   }
-  
-  // Trigger visual indicator
-  generalNoteInput.dispatchEvent(new Event('input'));
 }
 
 function updateBatchLockUI(locked) {
@@ -634,115 +664,40 @@ document.getElementById('lockBatchBtn').addEventListener('click', () => {
 });
 
 // Update Clear Button to work with Lock
-const originalClearHandler = clearNoteBtn.onclick;
-clearNoteBtn.onclick = () => {
-  const lockKey = getBatchLockKey();
-  const isLocked = localStorage.getItem(lockKey) === 'true';
-  
-  if (isLocked) {
-    // Clear AND unlock
-    if (confirm('This will clear and unlock the batch comment. Continue?')) {
+if (clearNoteBtn) {
+  const originalClearHandler = clearNoteBtn.onclick;
+  clearNoteBtn.onclick = () => {
+    const lockKey = getBatchLockKey();
+    const isLocked = localStorage.getItem(lockKey) === 'true';
+    
+    if (isLocked) {
+      // Clear AND unlock
+      if (confirm('This will clear and unlock the batch comment. Continue?')) {
+        generalNoteInput.value = '';
+        localStorage.setItem(lockKey, 'false');
+        localStorage.removeItem(getBatchCommentKey());
+        updateBatchLockUI(false);
+        generalNoteInput.focus();
+        show('🔓 Comment Cleared & Unlocked', 'ok');
+        playSoundSuccess();
+      }
+    } else {
+      // Just clear normally
       generalNoteInput.value = '';
-      localStorage.setItem(lockKey, 'false');
-      localStorage.removeItem(getBatchCommentKey());
-      updateBatchLockUI(false);
-      generalNoteInput.dispatchEvent(new Event('input'));
       generalNoteInput.focus();
-      show('🔓 Comment Cleared & Unlocked', 'ok');
-      playSoundSuccess();
     }
-  } else {
-    // Just clear normally
-    if (originalClearHandler) originalClearHandler();
-  }
-};
+  };
+}
 
 historyToggle.onclick = () => { 
   historyPanel.classList.toggle('expanded'); 
   if(historyPanel.classList.contains('expanded')) renderHistory();
 };
-// === FIX 2 & 3: Scan Event Listener (OPTIMISTIC MODE) ===
-scanInput.addEventListener('change', async () => {
-  const raw = scanInput.value.trim();
-  if (!raw) return;
 
-  // 1. Prevent double-scanning logic
-  if (isProcessing) return;
-  isProcessing = true;
-  scanInput.disabled = true;
-
-  // 2. Parse & Clean
-  const { part, serial } = parsePN_SN(raw);
-  const cleanedSerial = cleanSerialClient(serial);
-  const cleanedPart = part || 'UNKNOWN';
-
-  // 3. FAST CHECK: Local Duplicate?
-  if (checkLocalDuplicate(cleanedSerial)) {
-    playSoundDuplicate();
-    show('⚠️ DUPLICATE (Local)', 'dup');
-    
-    // Update display to show the duplicate details
-    lastPart.textContent = cleanedPart;
-    lastSerial.textContent = cleanedSerial;
-    lastScanStatus.textContent = 'DUPLICATE';
-    lastScanStatus.className = 'history-status';
-    lastScanStatus.style.cssText = 'background:#fef3c7; color:#92400e;';
-    
-    // Reset immediately
-    scanInput.value = '';
-    scanInput.disabled = false;
-    scanInput.focus();
-    isProcessing = false;
-    return;
-  }
-
-  // 4. Prepare Payload
-  const payload = {
-    action: 'SCAN',
-    secret: SHARED_SECRET,
-    operator: operatorInput.value || 'UNNAMED',
-    station: stationSel.value,
-    raw_scan: raw,
-    part_number: cleanedPart,
-    serial_number: cleanedSerial,
-    comment: $('#generalNote') ? $('#generalNote').value.trim() : ''
-  };
-
-  // 5. OPTIMISTIC UPDATE: Assume success
-  // Add to History immediately as "PENDING"
-  addToHistory({ 
-    part: cleanedPart, 
-    serial: cleanedSerial, 
-    status: 'PENDING', // Will turn Green/Yellow later via drainQueue
-    timestamp: new Date() 
-  });
-
-  // Update "Last Scan" Display
-  lastPart.textContent = cleanedPart;
-  lastSerial.textContent = cleanedSerial;
-  lastScanStatus.textContent = 'QUEUED';
-  lastScanStatus.className = 'history-status';
-  lastScanStatus.style.cssText = 'background:#dbeafe; color:#1e40af;'; // Blue for pending
-  saveLastScan(cleanedPart, cleanedSerial, 'QUEUED');
-
-  // 6. QUEUE IT & RESET UI
-  enqueue(payload);      // Add to background list
-  playSoundSuccess();    // Beep immediately!
-  
-  // Clear and unlock for next scan INSTANTLY
-  scanInput.value = '';
-  scanInput.disabled = false;
-  scanInput.style.opacity = '1';
-  scanInput.focus();
-  isProcessing = false;
-
-  // 7. Trigger Background Process (Fire and Forget)
-  setTimeout(drainQueue, 50); 
-});
 stationSel.addEventListener('change', () => { 
   savePrefs(); 
   loadLastScan();
-  loadBatchComment();    // Load last scan for this operator/station combo
+  loadBatchComment();
 });
 
 // Better offline detection
@@ -750,15 +705,28 @@ let isOnline = navigator.onLine;
 
 function updateNetworkStatus(online) {
   isOnline = online;
+  isServerReachable = online;
   const net = document.getElementById('netStatus');
+  const offlineWarning = document.getElementById('offlineWarning');
+  
   if (online) {
     net.textContent = 'ONLINE';
     net.style.background = 'var(--success)';
+    if (offlineWarning) offlineWarning.classList.remove('show');
     drainQueue();
   } else {
     net.textContent = 'OFFLINE';
     net.style.background = 'var(--error)';
+    if (offlineWarning) offlineWarning.classList.add('show');
   }
+}
+
+// Offline warning banner - tap to refresh
+const offlineWarning = document.getElementById('offlineWarning');
+if (offlineWarning) {
+  offlineWarning.addEventListener('click', () => {
+    location.reload();
+  });
 }
 
 window.addEventListener('online', () => updateNetworkStatus(true));
@@ -766,26 +734,21 @@ window.addEventListener('offline', () => updateNetworkStatus(false));
 
 // Ping server every 30 seconds to detect real connectivity
 setInterval(async () => {
-  try {
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 5000);
-    await fetch(ENDPOINT + '?ping=1', { 
-      method: 'GET', 
-      cache: 'no-cache',
-      signal: controller.signal 
-    });
-    if (!isOnline) updateNetworkStatus(true);
-  } catch {
-    if (isOnline) updateNetworkStatus(false);
+  const wasOnline = isOnline;
+  const nowOnline = await checkConnectivity();
+  if (wasOnline !== nowOnline) {
+    updateNetworkStatus(nowOnline);
   }
 }, 30000);
+
+// Initial connectivity check on load
+setTimeout(checkConnectivity, 2000);
 
 let isLocked = localStorage.getItem('isLocked') === 'true';
 
 function updateLock() {
   console.log('🔐 updateLock() called. isLocked:', isLocked);
   
-  const lockBar = document.getElementById('lockStatusBar');
   const lockBtnEl = document.getElementById('lockBtn');
   const unlockBtnEl = document.getElementById('unlockBtn');
   const rowEl = document.getElementById('operatorStationRow');
@@ -800,24 +763,15 @@ function updateLock() {
   stationSel.disabled = isLocked;
   
   if (isLocked) {
-    // LOCKED STATE
-    if (lockBar) lockBar.style.display = 'block';
-    if (rowEl) rowEl.classList.add('hidden');  // Hide operator/station row
-    const opEl = document.getElementById('lockedOperatorDisplay');
-    const stEl = document.getElementById('lockedStationDisplay');
-    if (opEl) opEl.textContent = operatorInput.value || 'UNNAMED';
-    if (stEl) stEl.textContent = stationSel.value || 'MAIN';
-    
+    // LOCKED STATE - just show unlock button, keep dropdowns visible but disabled
     lockBtnEl.style.display = 'none';
     unlockBtnEl.style.display = 'inline-flex';
-    console.log('✅ Locked - row hidden, unlock button visible');
+    console.log('✅ Locked - unlock button visible');
   } else {
     // UNLOCKED STATE
-    if (lockBar) lockBar.style.display = 'none';
-    if (rowEl) rowEl.classList.remove('hidden');  // Show operator/station row
     lockBtnEl.style.display = 'inline-flex';
     unlockBtnEl.style.display = 'none';
-    console.log('✅ Unlocked - row visible, lock button visible');
+    console.log('✅ Unlocked - lock button visible');
   }
 }
 
@@ -976,7 +930,7 @@ updateLock();
 document.body.addEventListener('touchstart', unlockAudioOnFirstTap);
 
 scanInput.focus();
-console.log('SeeScan Test v8.0.4 (Offline Fix)');
+console.log('SeeScan Test v8.0.5 (UI Cleanup)');
 
 // === BATTERY STATUS API ===
 
@@ -1108,11 +1062,6 @@ function resetDimTimer() {
   document.addEventListener(event, simpleBrighten, true);
 });
 
-function resetDimTimer() {
-  clearTimeout(dimTimer);
-  dimTimer = setTimeout(simpleDim, 60000); // 60000ms = 1 minute
-}
-
 // === EVENT LISTENERS ===
 // Reset brightness on any interaction
 window.addEventListener('click', simpleBrighten);
@@ -1124,7 +1073,6 @@ window.addEventListener('touchstart', simpleBrighten);
 resetDimTimer();
 
 // 2. Attach the Operator Lock listeners
-// (This was defined earlier but never called!)
 if (typeof attachLockHandlers === 'function') {
   attachLockHandlers();
   console.log('✅ Lock handlers initialized');
