@@ -1,76 +1,446 @@
-function myFunction() {
-  
-}
-/**
- * Web App endpoint for barcode posts from PWA.
- * Sheet structure: _RAW_DATA with columns:
- * A timestamp | B station_id | C operator_name | D raw_scan | E part_number
- * F serial_number | G is_duplicate | H source_workbook | I notes | J validated
- */
+const SHARED_SECRET = 'qk92X3vE7LrT8c59H1zUM4Bn0ySDFwGp';
+const RECIPIENT_EMAILS = ['ksilesky1@verizon.net', 'chip.brandner@gmail.com'];
 
-const SHEET_ID = '1kZkCYyRl34SB-_T2E5jAO4dOWf60t5faDJGl_7ACMHo';
-const RAW_SHEET = '_RAW_DATA';
-const SHARED_SECRET = 'qk92X3vE7LrT8c59H1zUM4Bn0ySDFwGp'; // must match PWA
+// =================================================================
+// CORS HANDLERS - MUST BE FIRST
+// =================================================================
+
+/**
+ * Handles OPTIONS preflight requests for CORS compliance.
+ * Google Apps Script doesn't support setHeaders(), so we return a simple response
+ * and rely on doGet/doPost CORS headers
+ */
+function doOptions(e) {
+  var output = ContentService.createTextOutput('');
+  output.setMimeType(ContentService.MimeType.TEXT);
+  return output;
+}
+
+/**
+ * Handles GET requests - returns OK status with CORS headers.
+ */
+function doGet(e) {
+  var output = ContentService.createTextOutput(JSON.stringify({ 
+    status: "OK", 
+    message: "CORS preflight check success" 
+  }));
+  output.setMimeType(ContentService.MimeType.JSON);
+  return output;
+}
+
+/**
+ * Standard response function with CORS header.
+ */
+function response(data) {
+  var output = ContentService.createTextOutput(JSON.stringify(data));
+  output.setMimeType(ContentService.MimeType.JSON);
+  return output;
+}
+
+// =================================================================
+// MAIN POST HANDLER
+// =================================================================
 
 function doPost(e) {
+  const lock = LockService.getScriptLock();
+  // OPTIMIZED: Reduced timeout for faster processing
+  lock.tryLock(5000);
+
   try {
-    const body = JSON.parse(e.postData.contents);
-
-    if (body.secret !== SHARED_SECRET) {
-      return reply(403, {status: 'UNAUTHORIZED'});
+    if (!e || !e.postData || !e.postData.contents) {
+       return response({status: "ERROR", message: "No data received"});
     }
-
-    const ss = SpreadsheetApp.openById(SHEET_ID);
-    const sheet = ss.getSheetByName(RAW_SHEET);
-    if (!sheet) return reply(500, {status:'NO_SHEET'});
-
-    // check duplicate
-    const serial = body.serial_number;
     
-    // Check if a serial was provided. If not, don't check for duplicates (allows logging test scans etc)
-    if (serial) {
-      const found = sheet.getRange('F2:F').createTextFinder(serial).findNext();
-      if (found) return reply(200, {status:'DUPLICATE'});
+    // Clean the raw POST data before parsing
+    let rawContents = e.postData.contents;
+    rawContents = rawContents.replace(/[\x00-\x1F\x7F]/g, ''); 
+    
+    if (rawContents.startsWith('"') && rawContents.endsWith('"')) {
+        rawContents = rawContents.substring(1, rawContents.length - 1);
+    }
+    if (rawContents.startsWith("'") && rawContents.endsWith("'")) {
+        rawContents = rawContents.substring(1, rawContents.length - 1);
     }
 
-    // append new row
+    let payload;
+    try {
+      payload = JSON.parse(rawContents);
+    } catch (parseErr) {
+      return response({status: "ERROR", message: "JSON parsing failed: " + parseErr.toString()});
+    }
+
+    if (payload.secret !== SHARED_SECRET) {
+      return response({status: "ERROR", message: "Invalid secret"});
+    }
+
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('_RAW_DATA');
+    if (!sheet) return response({status: "ERROR", message: "Sheet _RAW_DATA not found"});
+
+    // Data cleaning
+    const rawPart = payload.part_number || '';
+    const rawSerial = payload.serial_number || '';
+    
+    const part = cleanPartNumber(rawPart);
+    const serial = cleanSerialNumber(rawSerial);
+    
+    // HANDLE ACTIONS
+    
+    // 1. GENERAL NOTE (New Row)
+    if (payload.action === 'NOTE') {
+      sheet.appendRow([
+        new Date(),                        // A: Timestamp
+        payload.station || '',             // B: Station
+        payload.operator || '',            // C: Operator
+        "'NOTE: " + payload.note,           // D: Raw Scan (force text with quote)
+        '',                                // E: Part Number (empty)
+        '',                                // F: Serial Number (empty)
+        '',                                // G: Batch Comment (empty)
+        payload.note                       // H: Note
+      ]);
+      return response({status: "OK"});
+    }
+
+    // 2. CORRECTION (Find and Edit Previous Scan)
+    if (payload.action === 'CORRECTION') {
+      const lastRow = sheet.getLastRow();
+      const data = sheet.getRange('A2:F' + lastRow).getValues(); 
+      
+      for (let i = data.length - 1; i >= 0; i--) {
+        if (String(data[i][5]) === String(serial) && String(data[i][4]) === String(part)) {
+          sheet.getRange(i + 2, 8).setValue(payload.note);  // Column H for correction notes
+          return response({status: "OK", message: "Note attached"});
+        }
+      }
+      return response({status: "ERROR", message: "Original scan not found"});
+    }
+
+    // 3. STANDARD SCAN (Default Behavior)
+    const lastRow = sheet.getLastRow();
+    let isDuplicate = false;
+    
+    if (lastRow > 1) {
+      // OPTIMIZED: Only check last 500 scans instead of 2000 for faster response
+      const startRow = Math.max(2, lastRow - 50); 
+      const numRows = lastRow - startRow + 1;
+      const dataRange = sheet.getRange(startRow, 5, numRows, 2).getValues(); 
+      
+      for (let i = dataRange.length - 1; i >= 0; i--) {
+        if (String(dataRange[i][1]) === String(serial) && String(dataRange[i][0]) === String(part)) {
+          isDuplicate = true;
+          break;
+        }
+      }
+    }
+
+    if (isDuplicate) {
+      return response({status: "DUPLICATE"});
+    }
+
+    // Save Scan
     sheet.appendRow([
-      new Date(),
-      body.station || 'N/A',
-      body.operator || 'N/A',
-      body.raw_scan || '',
-      body.part_number || '',
-      body.serial_number || '',
-      'N',
-      'API',
-      '',
-      ''
+      new Date(),                          // A: Timestamp
+      payload.station || '',               // B: Station
+      payload.operator || '',              // C: Operator
+      (payload.raw_scan && payload.raw_scan.startsWith('+')) ? "'" + payload.raw_scan : payload.raw_scan || '',              // D: Raw Scan
+      "'" + part,                          // E: Part Number
+      "'" + serial,                        // F: Serial Number
+      "'" + (payload.comment || ''),       // G: Batch Comment
+      ''                                   // H: Correction Note (empty for new scans)
     ]);
 
-    return reply(200, {status:'OK'});
+    return response({status: "OK"});
+
   } catch (err) {
-    Logger.log(err);
-    return reply(500, {status:'ERROR', message:String(err)});
+    return response({status: "ERROR", message: err.toString()});
+  } finally {
+    lock.releaseLock();
   }
 }
 
-function doOptions(e) {
-  return ContentService.createTextOutput('')
-    .setMimeType(ContentService.MimeType.TEXT)
-    .setHeaders(corsHeaders());
+// =================================================================
+// BARCODE CLEANING FUNCTIONS
+// =================================================================
+
+function cleanPartNumber(rawPart) {
+  if (!rawPart) return "";
+  var cleaned = rawPart.toString();
+  if (cleaned.startsWith("'")) cleaned = cleaned.substring(1);
+  if (cleaned.startsWith("446") && cleaned.endsWith("1") && cleaned.length > 4) {
+    cleaned = cleaned.substring(3, cleaned.length - 1);
+  }
+  return cleaned.trim();
 }
 
-function reply(code, obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON)
-    .setHeaders(corsHeaders())
-    .setResponseCode(code);
+function cleanSerialNumber(rawSerial) {
+  if (!rawSerial) return "";
+  var cleaned = rawSerial.toString();
+  if (cleaned.startsWith("'")) cleaned = cleaned.substring(1);
+  if (cleaned.includes("$")) {
+    cleaned = cleaned.split("$")[0]; 
+  } else if (cleaned.includes("+")) {
+    cleaned = cleaned.split("+")[0];
+  }
+  cleaned = cleaned.replace(/[^0-9]+$/, '');
+  return cleaned.trim();
 }
 
-function corsHeaders() {
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
-  };
+// ==================================================
+// REPORTING AND HELPER FUNCTIONS
+// ==================================================
+
+function sendBuildAssemblyReport() {
+  const spreadSheet = SpreadsheetApp.getActiveSpreadsheet();
+  const rawSheet = spreadSheet.getSheetByName('_RAW_DATA');
+  
+  const today = new Date();
+  const targetDate = new Date(today);
+  const timeZone = spreadSheet.getSpreadsheetTimeZone();
+
+  // IMPORTANT: Uncomment this line to set the report back to 'yesterday' after debugging.
+  targetDate.setDate(today.getDate() - 1); 
+  
+  const reportDateStr = Utilities.formatDate(targetDate, timeZone, "MM-dd-yyyy");
+
+  const lastRow = rawSheet.getLastRow();
+  if (lastRow < 2) {
+    console.log('No data to report.');
+    return;
+  }
+  // Retrieve all data, including the Batch Comment column (Column G / index 6)
+  const allData = rawSheet.getRange('A2:H' + lastRow).getValues();
+
+  // MODIFIED: New grouping includes Batch Comment Context
+  const groups = {};
+  // Variables to track overall SO counts for the email summary
+  let totalSO = 0;
+  let totalNonSO = 0;
+  
+  let hasData = false;
+  let totalScansToday = 0;
+
+  allData.forEach(row => {
+    if (!row[0]) return;
+    const timestamp = new Date(row[0]); 
+
+    if (timestamp.getDate() === targetDate.getDate() &&
+        timestamp.getMonth() === targetDate.getMonth() &&
+        timestamp.getFullYear() === targetDate.getFullYear()) {
+      
+      hasData = true;
+      totalScansToday++;
+      const station = row[1];
+      const operator = row[2];
+      let partNumber = row[4] ? row[4].toString() : '';
+      let serialNumber = row[5] ? row[5].toString() : '';
+      let batchComment = row[6] ? row[6].toString() : ''; // Column G
+
+      if (partNumber.startsWith("'")) partNumber = partNumber.substring(1);
+      if (serialNumber.startsWith("'")) serialNumber = serialNumber.substring(1);
+      
+      // Determine SO Context (case-insensitive)
+      const isSO = batchComment.toUpperCase().includes('SO');
+      const soContext = isSO ? 'SO' : '';
+
+      // NEW KEY: Group by Operator, Station, Part Number, AND SO Context
+      const key = operator + '|' + station + '|' + partNumber + '|' + soContext;
+      
+      if (!groups[key]) groups[key] = { operator, station, partNumber, soContext, serials: [] };
+      groups[key].serials.push(serialNumber);
+      
+      // Update Total SO/Non-SO counts for email summary
+      if (isSO) {
+        totalSO++;
+      } else {
+        totalNonSO++;
+      }
+    }
+  });
+
+  if (!hasData) {
+    console.log('No data found for ' + reportDateStr);
+    return;
+  }
+
+  const reportData = [];
+  // MODIFIED: Added 'Context' column to the main report headers
+  const headers = ['Operator', 'Station', 'Part Number', 'Context', 'Total Scans (Boxes)', 'Total Pieces', 'Serial Numbers Logged'];
+  reportData.push(headers);
+  
+  const sortedKeys = Object.keys(groups).sort();
+
+  for (const key of sortedKeys) {
+    const group = groups[key];
+    const totalScans = group.serials.length;
+    const totalPieces = totalScans * 100;
+    // The compressSerialNumbers only includes serials for the specific context of this group
+    const compressedSerials = compressSerialNumbers(group.serials);
+    
+    // MODIFIED: Inserting the context into the report row
+    reportData.push([
+      group.operator, 
+      group.station, 
+      "'" + group.partNumber, 
+      group.soContext, // NEW COLUMN
+      totalScans, 
+      totalPieces, 
+      "'" + compressedSerials
+    ]);
+  }
+  
+  // NEW: Calculate Grand Totals by Part Number (Still useful for a summary)
+  const partNumberSummary = {};
+  Object.values(groups).forEach(group => {
+    const partKey = group.partNumber;
+    if (!partNumberSummary[partKey]) {
+      partNumberSummary[partKey] = { totalScans: 0, totalPieces: 0 };
+    }
+    partNumberSummary[partKey].totalScans += group.serials.length;
+    partNumberSummary[partKey].totalPieces += group.serials.length * 100;
+  });
+
+
+  // Start of Summary Sections at the bottom of the sheet
+  reportData.push(['', '', '', '', '', '', '']); 
+  reportData.push(['', '', '', '', '', '', '']); 
+  
+  // Part Number Grand Total Section
+  reportData.push(['Grand Total by Part Number', '', '', '', '', '', '']);
+  reportData.push(['Part Number', 'Total Scans (Boxes)', 'Total Pieces', '', '', '', '']); 
+
+  const partSortedKeys = Object.keys(partNumberSummary).sort();
+
+  for (const key of partSortedKeys) {
+    const summary = partNumberSummary[key];
+    reportData.push(["'" + key, summary.totalScans, summary.totalPieces, '', '', '', '']);
+  }
+  // REMOVED: The old "Part Number Summary by Batch Comment Context" section is now integrated into the main table.
+
+  const reportSheetName = 'Build Report - ' + reportDateStr;
+  let tempSheet = spreadSheet.insertSheet(reportSheetName);
+  
+  // Headers.length is now 7
+  tempSheet.getRange(1, 1, reportData.length, headers.length).setValues(reportData);
+  tempSheet.autoResizeColumns(1, headers.length); 
+  tempSheet.getRange("A1:G1").setFontWeight("bold"); // Updated range to 'G1'
+  
+  // Calculate start row for the Part Number Grand Total summary
+  const summaryStartRow = sortedKeys.length + 3; 
+  tempSheet.getRange(summaryStartRow, 1, 2, 3).setFontWeight("bold");
+
+  SpreadsheetApp.flush();
+
+  const adminEmailList = RECIPIENT_EMAILS.join(',');
+  const subject = 'Daily Build Assembly Report - ' + reportDateStr;
+  
+  let stationSummary = '';
+  let operatorSummary = '';
+  let stationCounts = {};
+  let operatorCounts = {};
+  
+  // Recalculate counts based on the new, consolidated groups structure
+  for (const key of sortedKeys) {
+    const group = groups[key];
+    const scanCount = group.serials.length;
+    
+    stationCounts[group.station] = (stationCounts[group.station] || 0) + scanCount;
+    operatorCounts[group.operator] = (operatorCounts[group.operator] || 0) + scanCount;
+  }
+  
+  stationSummary = Object.keys(stationCounts).map(s => `${s}: ${stationCounts[s]}`).join('\n');
+  operatorSummary = Object.keys(operatorCounts).map(o => `${o}: ${operatorCounts[o]}`).join('\n');
+
+  // The email body summary still uses the overall totals calculated in the main loop
+  const soContextSummaryString = `
+Total Scans with 'SO' context: ${totalSO} (${totalSO * 100} pieces)
+Total Scans without 'SO' context: ${totalNonSO} (${totalNonSO * 100} pieces)
+`;
+
+  const emailBody = `
+Daily Build Assembly Report Summary - ${reportDateStr}
+
+Total Scans Today: ${totalScansToday}
+
+By Station:
+${stationSummary}
+
+By Operator:
+${operatorSummary}
+
+---
+Batch Comment ('SO' Context) Summary:
+${soContextSummaryString}
+
+View full spreadsheet attachment for detailed serial ranges and the full Part Number breakdown by context.
+`;
+  
+  const url = "https://docs.google.com/spreadsheets/d/" + spreadSheet.getId() + "/export?format=xlsx&gid=" + tempSheet.getSheetId();
+  const token = ScriptApp.getOAuthToken();
+  const response = UrlFetchApp.fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+  
+  const fileBlob = response.getBlob().setName('Build_Report_' + reportDateStr + '.xlsx');
+  
+  MailApp.sendEmail(adminEmailList, subject, emailBody, { attachments: [fileBlob] });
+  
+  spreadSheet.deleteSheet(tempSheet);
+}
+
+function updateOperatorTabs() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const rawSheet = ss.getSheetByName('_RAW_DATA');
+  const lastRow = rawSheet.getLastRow();
+  if (lastRow < 2) return;
+  
+  const operators = rawSheet.getRange('C2:C' + lastRow).getValues().flat();
+  const uniqueOperators = [...new Set(operators.filter(op => op && op !== ''))].sort();
+  
+  uniqueOperators.forEach(opName => {
+    let sheet = ss.getSheetByName(opName);
+    if (!sheet) sheet = ss.insertSheet(opName);
+    
+    sheet.clear();
+    const formula = `=QUERY('_RAW_DATA'!A:H, "SELECT * WHERE C = '${opName}' ORDER BY A DESC", 1)`; 
+    sheet.getRange('A1').setFormula(formula);
+    
+    sheet.getRange('A1:H1').setFontWeight('bold').setBackground('#e6eef7');
+    sheet.setColumnWidths(1, 8, 130); 
+    sheet.setFrozenRows(1);
+  });
+}
+
+function parseSerial(serial) {
+  if (!serial) return { prefix: serial, num: null };
+  const match = serial.match(/^(.*?)(\d+)$/);
+  return match ? { prefix: match[1], num: parseInt(match[2], 10) } : { prefix: serial, num: null };
+}
+
+function formatRange(start, end) {
+  if (start === end) return start;
+  const s = parseSerial(start), e = parseSerial(end);
+  if (s.prefix === e.prefix && e.num !== null && start.substring(0, s.prefix.length) === end.substring(0, e.prefix.length)) {
+     return start + '-' + e.num;
+  }
+  return start + ' - ' + end;
+}
+
+function compressSerialNumbers(serials) {
+  if (!serials || !serials.length) return "";
+  const parsed = serials.map(parseSerial).filter(s => s.num !== null).sort((a,b) => (a.prefix < b.prefix ? -1 : (a.prefix > b.prefix ? 1 : a.num - b.num)));
+  if (!parsed.length) return serials.join(' / ');
+  
+  const ranges = [];
+  let start = parsed[0], end = parsed[0];
+  for (let i = 1; i < parsed.length; i++) {
+    if (parsed[i].prefix === end.prefix && parsed[i].num === end.num + 1) {
+      end = parsed[i];
+    } else {
+      const startStr = start.num === null ? start.prefix : start.prefix + start.num;
+      const endStr = end.num === null ? end.prefix : end.prefix + end.num;
+      ranges.push(formatRange(startStr, endStr));
+      start = parsed[i]; end = parsed[i];
+    }
+  }
+  const startStr = start.num === null ? start.prefix : start.prefix + start.num;
+  const endStr = end.num === null ? end.prefix : end.prefix + end.num;
+  ranges.push(formatRange(startStr, endStr));
+  return ranges.join(' / ');
 }

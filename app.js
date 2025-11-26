@@ -333,12 +333,6 @@ function renderHistory() {
 async function send(payload, fromQueue = false) {
   const startTime = Date.now();
   
-  // Check if we're actually connected first
-  if (!navigator.onLine) {
-    console.warn('⚠️ navigator.onLine = false, returning OFFLINE');
-    return 'OFFLINE';
-  }
-  
   try {
     const res = await fetch(ENDPOINT, {
       method: 'POST',
@@ -515,7 +509,7 @@ async function drainQueue() {
     setQueue(q);
     
     // 3. Process next item immediately
-    drainQueue(); 
+    setTimeout(drainQueue, 1000); 
   } else if (status === 'ERROR') {
       // If hard error, maybe keep in queue or move to error state? 
       // For now, we keep it to retry, but you could add logic to skip after X retries
@@ -982,7 +976,7 @@ updateLock();
 document.body.addEventListener('touchstart', unlockAudioOnFirstTap);
 
 scanInput.focus();
-console.log('SeeScan Test v8.0.3 (LBattery API)');
+console.log('SeeScan Test v8.0.4 (Offline Fix)');
 
 // === BATTERY STATUS API ===
 
@@ -997,17 +991,22 @@ function updateBatteryInfo(battery) {
 
   if (levelText) {
     const percentage = Math.round(battery.level * 100);
-    const chargingStatus = battery.charging ? '⚡️ Charging' : 'Discharging';
     
-    levelText.textContent = `Battery: ${percentage}% (${chargingStatus})`;
+    // REFINED: Only show the "Charging" text and icon when it's plugged in.
+    const chargingStatus = battery.charging ? ' ⚡️ CHARGING' : '';
+    
+    levelText.textContent = `Battery: ${percentage}%${chargingStatus}`;
     
     // Optional: Change background color based on level
     if (percentage < 20 && !battery.charging) {
       statusContainer.style.backgroundColor = '#fecaca'; // Red for low battery
+      statusContainer.style.fontWeight = 'bold';
     } else if (battery.charging) {
-      statusContainer.style.backgroundColor = '#d1fae5'; // Green for charging
+      statusContainer.style.backgroundColor = '#d1fae5'; // Light green for charging
+      statusContainer.style.fontWeight = 'normal';
     } else {
-      statusContainer.style.backgroundColor = '#e5e7eb'; // Default gray
+      statusContainer.style.backgroundColor = '#e5e7eb'; // Default gray for discharging
+      statusContainer.style.fontWeight = 'normal';
     }
   }
 }
@@ -1028,7 +1027,6 @@ async function startBatteryMonitoring() {
 
     } catch (error) {
       console.warn('Battery Status API failed to access device battery. Check webkiosk app settings.', error);
-      // Fallback for cases where the API is blocked/unavailable
       const statusContainer = document.getElementById('battery-status');
       if (statusContainer) {
         statusContainer.style.display = 'block';
@@ -1041,7 +1039,7 @@ async function startBatteryMonitoring() {
   }
 }
 
-// Call this on initialization in your app.js
+// Ensure this call remains at the bottom of your app.js
 startBatteryMonitoring();
 
 // SERVICE WORKER REGISTRATION - ADD THIS AT THE END OF app.js
