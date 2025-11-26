@@ -642,8 +642,10 @@ function updateNetworkStatus(online) {
   const scanField = document.getElementById('scan');
   
   if (online) {
-    net.textContent = 'ONLINE';
-    net.style.background = 'var(--success)';
+    if (net) {
+      net.textContent = 'ONLINE';
+      net.style.background = 'var(--success)';
+    }
     if (offlineWarning) offlineWarning.classList.remove('show');
     // Re-enable scan input
     if (scanField && !isProcessing) {
@@ -652,8 +654,10 @@ function updateNetworkStatus(online) {
       scanField.placeholder = 'Focus here and scan';
     }
   } else {
-    net.textContent = 'OFFLINE';
-    net.style.background = 'var(--error)';
+    if (net) {
+      net.textContent = 'OFFLINE';
+      net.style.background = 'var(--error)';
+    }
     if (offlineWarning) offlineWarning.classList.add('show');
     // Disable scan input when offline
     if (scanField) {
@@ -868,9 +872,49 @@ updateLock();
 document.body.addEventListener('touchstart', unlockAudioOnFirstTap);
 
 scanInput.focus();
-console.log('SeeScan Test v8.0.7 (Cleanup)');
+console.log('SeeScan v8.0.8 (Compact UI)');
 
-// Battery API removed - no longer needed
+// === BATTERY STATUS API ===
+function updateBatteryInfo(battery) {
+  const batteryEl = document.getElementById('batteryStatus');
+  if (!batteryEl) return;
+
+  const percentage = Math.round(battery.level * 100);
+  const chargingIcon = battery.charging ? '⚡' : '🔋';
+  
+  batteryEl.textContent = `${chargingIcon} ${percentage}%`;
+  
+  // Color based on level
+  if (percentage < 20 && !battery.charging) {
+    batteryEl.style.background = '#ef4444'; // Red for low
+  } else if (battery.charging) {
+    batteryEl.style.background = '#10b981'; // Green for charging
+  } else {
+    batteryEl.style.background = '#6b7280'; // Gray default
+  }
+}
+
+async function startBatteryMonitoring() {
+  const batteryEl = document.getElementById('batteryStatus');
+  
+  if ('getBattery' in navigator) {
+    try {
+      const battery = await navigator.getBattery();
+      updateBatteryInfo(battery);
+      battery.addEventListener('levelchange', () => updateBatteryInfo(battery));
+      battery.addEventListener('chargingchange', () => updateBatteryInfo(battery));
+      console.log('✅ Battery monitoring started');
+    } catch (error) {
+      console.warn('Battery API failed:', error);
+      if (batteryEl) batteryEl.textContent = '🔋 N/A';
+    }
+  } else {
+    console.warn('Battery API not supported');
+    if (batteryEl) batteryEl.textContent = '🔋 N/A';
+  }
+}
+
+startBatteryMonitoring();
 
 // SERVICE WORKER REGISTRATION - ADD THIS AT THE END OF app.js
 if ('serviceWorker' in navigator) {
