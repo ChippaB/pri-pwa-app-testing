@@ -547,18 +547,13 @@ function loadBatchComment() {
 
 function updateBatchLockUI(locked) {
   const lockBtn = document.getElementById('lockBatchBtn');
-  const lockStatus = document.getElementById('batchLockStatus');
-  const lockOperator = document.getElementById('batchLockOperator');
   
   if (locked) {
-    lockStatus.style.display = 'block';
-    lockOperator.textContent = `${operatorInput.value} at ${stationSel.value}`;
     lockBtn.innerHTML = '🔓 Unlock Comment';
     lockBtn.style.background = 'var(--warning)';
     generalNoteInput.disabled = true;
     generalNoteInput.style.opacity = '0.7';
   } else {
-    lockStatus.style.display = 'none';
     lockBtn.innerHTML = '🔒 Lock Comment';
     lockBtn.style.background = 'var(--success)';
     generalNoteInput.disabled = false;
@@ -873,71 +868,9 @@ updateLock();
 document.body.addEventListener('touchstart', unlockAudioOnFirstTap);
 
 scanInput.focus();
-console.log('SeeScan Test v8.0.6 (No Offline Queue)');
+console.log('SeeScan Test v8.0.7 (Cleanup)');
 
-// === BATTERY STATUS API ===
-
-function updateBatteryInfo(battery) {
-  const statusContainer = document.getElementById('battery-status');
-  const levelText = document.getElementById('battery-level-text');
-  
-  // Show the container once we successfully get battery data
-  if (statusContainer) {
-    statusContainer.style.display = 'block';
-  }
-
-  if (levelText) {
-    const percentage = Math.round(battery.level * 100);
-    
-    // REFINED: Only show the "Charging" text and icon when it's plugged in.
-    const chargingStatus = battery.charging ? ' ⚡️ CHARGING' : '';
-    
-    levelText.textContent = `Battery: ${percentage}%${chargingStatus}`;
-    
-    // Optional: Change background color based on level
-    if (percentage < 20 && !battery.charging) {
-      statusContainer.style.backgroundColor = '#fecaca'; // Red for low battery
-      statusContainer.style.fontWeight = 'bold';
-    } else if (battery.charging) {
-      statusContainer.style.backgroundColor = '#d1fae5'; // Light green for charging
-      statusContainer.style.fontWeight = 'normal';
-    } else {
-      statusContainer.style.backgroundColor = '#e5e7eb'; // Default gray for discharging
-      statusContainer.style.fontWeight = 'normal';
-    }
-  }
-}
-
-async function startBatteryMonitoring() {
-  if ('getBattery' in navigator) {
-    try {
-      const battery = await navigator.getBattery();
-      
-      // Initial update
-      updateBatteryInfo(battery);
-
-      // Listen for changes
-      battery.addEventListener('levelchange', () => updateBatteryInfo(battery));
-      battery.addEventListener('chargingchange', () => updateBatteryInfo(battery));
-      
-      console.log('✅ Battery Status API monitoring started.');
-
-    } catch (error) {
-      console.warn('Battery Status API failed to access device battery. Check webkiosk app settings.', error);
-      const statusContainer = document.getElementById('battery-status');
-      if (statusContainer) {
-        statusContainer.style.display = 'block';
-        document.getElementById('battery-level-text').textContent = 'Battery Status Unavailable';
-        statusContainer.style.backgroundColor = '#fee2e2';
-      }
-    }
-  } else {
-    console.warn('❌ navigator.getBattery() not supported in this browser/webview.');
-  }
-}
-
-// Ensure this call remains at the bottom of your app.js
-startBatteryMonitoring();
+// Battery API removed - no longer needed
 
 // SERVICE WORKER REGISTRATION - ADD THIS AT THE END OF app.js
 if ('serviceWorker' in navigator) {
@@ -997,7 +930,7 @@ function simpleBrighten() {
 
 function resetDimTimer() {
   clearTimeout(dimTimer);
-  dimTimer = setTimeout(simpleDim, 90000); // 90 seconds = 1.5 minutes
+  dimTimer = setTimeout(simpleDim, 60000); // 60 seconds = 1 minute
 }
 
 // Detect activity and reset timer
