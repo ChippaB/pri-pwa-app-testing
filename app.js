@@ -22,17 +22,17 @@ const PART_NUMBER_MAP = {
 };
 
 // ===== DATE/TIME FORMATTING HELPERS =====
-function formatDateDDMMYY(date) {
+function formatDateMMDDYY(date) {
   const d = new Date(date);
-  const day = String(d.getDate()).padStart(2, '0');
   const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
   const year = String(d.getFullYear()).slice(-2);
-  return `${day}/${month}/${year}`;
+  return `${month}/${day}/${year}`;
 }
 
 function formatTimestamp(date) {
   const d = new Date(date);
-  const dateStr = formatDateDDMMYY(d);
+  const dateStr = formatDateMMDDYY(d);
   const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   return `${dateStr} ${timeStr}`;
 }
@@ -51,7 +51,7 @@ function getRelativeTime(date) {
   if (diffMin < 60) return `${diffMin} mins ago`;
   if (diffHr === 1) return '1 hour ago';
   if (diffHr < 24) return `${diffHr} hours ago`;
-  return formatDateDDMMYY(then);
+  return formatDateMMDDYY(then);
 }
 
 // ===== HELPERS =====
