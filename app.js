@@ -3,7 +3,7 @@
 // v8.1.1: Fixed history not clearing on new day, fixed initial offline detection
 // FIXES: XSS vulnerability, lock acquisition handling, 10s timeout, history cap
 
-const ENDPOINT = 'https://script.google.com/macros/s/AKfycbyZio2iE1piL2hczpUgDx26EBn0_NxAj5o9vlFG6a8JoRD9lDu-B7VOH903_ArWaF4t/exec'; 
+const ENDPOINT = 'https://script.google.com/macros/s/AKfycbzNZBVOT44XRHGgHzaHtasjAEnrsuLavKpI7iUBm9r5tF7RwuMOHSc-VclO98NdkKyCAA/exec'; 
 
 const SHARED_SECRET = 'qk92X3vE7LrT8c59H1zUM4Bn0ySDFwGp';
 
