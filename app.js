@@ -1,4 +1,5 @@
 // ===== SeeScan v8.2.0 - Production Release =====
+// v8.2.4: Final offline fixes, battery status improvements
 // v8.2.0: Added timestamps with relative time, DD/MM/YY format, wake-from-sleep connectivity fix
 // v8.1.1: Fixed history not clearing on new day, fixed initial offline detection
 // FIXES: XSS vulnerability, lock acquisition handling, 10s timeout, history cap
