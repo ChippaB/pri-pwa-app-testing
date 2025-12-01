@@ -1,4 +1,6 @@
-// ===== SeeScan v8.1.0 - Production Ready =====
+// ===== SeeScan v8.2.0 - Production Release =====
+// v8.2.0: Added timestamps with relative time, DD/MM/YY format, wake-from-sleep connectivity fix
+// v8.1.1: Fixed history not clearing on new day, fixed initial offline detection
 // FIXES: XSS vulnerability, lock acquisition handling, 10s timeout, history cap
 
 const ENDPOINT = 'https://script.google.com/macros/s/AKfycbyZio2iE1piL2hczpUgDx26EBn0_NxAj5o9vlFG6a8JoRD9lDu-B7VOH903_ArWaF4t/exec'; 
@@ -19,6 +21,39 @@ const PART_NUMBER_MAP = {
   '0100812574024722': '301-PFR80WKN'
 };
 
+// ===== DATE/TIME FORMATTING HELPERS =====
+function formatDateDDMMYY(date) {
+  const d = new Date(date);
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = String(d.getFullYear()).slice(-2);
+  return `${day}/${month}/${year}`;
+}
+
+function formatTimestamp(date) {
+  const d = new Date(date);
+  const dateStr = formatDateDDMMYY(d);
+  const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return `${dateStr} ${timeStr}`;
+}
+
+function getRelativeTime(date) {
+  const now = new Date();
+  const then = new Date(date);
+  const diffMs = now - then;
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHr = Math.floor(diffMin / 60);
+  
+  if (diffSec < 10) return 'Just now';
+  if (diffSec < 60) return `${diffSec} secs ago`;
+  if (diffMin === 1) return '1 min ago';
+  if (diffMin < 60) return `${diffMin} mins ago`;
+  if (diffHr === 1) return '1 hour ago';
+  if (diffHr < 24) return `${diffHr} hours ago`;
+  return formatDateDDMMYY(then);
+}
+
 // ===== HELPERS =====
 function unlockAudioOnFirstTap() {
   initAudio();
@@ -32,6 +67,8 @@ const scanInput = $('#scan'), operatorInput = $('#operator'), stationSel = $('#s
 const queueInfo = $('#queueInfo'), clearBtn = $('#clearBtn');
 const historyToggle = $('#historyToggle'), historyPanel = $('#historyPanel');
 const lastScanStatus = $('#lastScanStatus');
+const lastScanTime = $('#lastScanTime');
+const lastScanRelative = $('#lastScanRelative');
 const lockBtn = $('#lockBtn'), unlockBtn = $('#unlockBtn')
 const correctionModal = $('#correctionModal');
 const modalContext = $('#modalContext');
@@ -189,6 +226,37 @@ function saveLastScan(part, serial, status) {
   const key = getLastScanKey();
   const scanData = { part, serial, status, timestamp: new Date().toISOString() };
   localStorage.setItem(key, JSON.stringify(scanData));
+  updateLastScanDisplay(scanData);
+}
+
+function updateLastScanDisplay(data) {
+  if (!data) {
+    lastPart.textContent = '—';
+    lastSerial.textContent = '—';
+    lastScanStatus.textContent = '';
+    if (lastScanTime) lastScanTime.textContent = '';
+    if (lastScanRelative) lastScanRelative.textContent = '';
+    return;
+  }
+  
+  lastPart.textContent = data.part || '—';
+  lastSerial.textContent = data.serial || '—';
+  lastScanStatus.textContent = data.status || '';
+  
+  // Apply status styling
+  if (data.status === 'OK') {
+    lastScanStatus.style.cssText = 'background:#d1fae5; color:#065f46;';
+  } else if (data.status === 'DUPLICATE') {
+    lastScanStatus.style.cssText = 'background:#fef3c7; color:#92400e;';
+  } else {
+    lastScanStatus.style.cssText = 'background:#fee2e2; color:#991b1b;';
+  }
+  
+  // Update timestamp displays
+  if (data.timestamp) {
+    if (lastScanTime) lastScanTime.textContent = formatTimestamp(data.timestamp);
+    if (lastScanRelative) lastScanRelative.textContent = getRelativeTime(data.timestamp);
+  }
 }
 
 function loadLastScan() {
@@ -197,28 +265,50 @@ function loadLastScan() {
   if (stored) {
     try {
       const data = JSON.parse(stored);
-      lastPart.textContent = data.part || '—';
-      lastSerial.textContent = data.serial || '—';
-      lastScanStatus.textContent = data.status || '';
+      updateLastScanDisplay(data);
       return;
     } catch (e) {}
   }
-  lastPart.textContent = '—';
-  lastSerial.textContent = '—';
-  lastScanStatus.textContent = '';
+  updateLastScanDisplay(null);
 }
+
+// Update relative time every 30 seconds
+setInterval(() => {
+  const key = getLastScanKey();
+  const stored = localStorage.getItem(key);
+  if (stored && lastScanRelative) {
+    try {
+      const data = JSON.parse(stored);
+      if (data.timestamp) {
+        lastScanRelative.textContent = getRelativeTime(data.timestamp);
+      }
+    } catch (e) {}
+  }
+}, 30000);
 
 function renderQueue() {
   queueInfo.innerHTML = '';
 }
 
 function getHistoryKey() { return `history_${operatorInput.value.trim() || 'UNNAMED'}`; }
-function getHistory() { try { return JSON.parse(localStorage.getItem(getHistoryKey()) || '[]'); } catch { return []; } }
+
+function getHistory() { 
+  try { 
+    let h = JSON.parse(localStorage.getItem(getHistoryKey()) || '[]');
+    // Clear history if first item is from a different day
+    if (h.length > 0 && new Date(h[0].timestamp).toDateString() !== new Date().toDateString()) {
+      h = [];
+      localStorage.setItem(getHistoryKey(), '[]');
+    }
+    return h;
+  } catch { 
+    return []; 
+  } 
+}
 
 function addToHistory(item) {
   const key = getHistoryKey();
-  let h = getHistory();
-  if (h.length > 0 && new Date(h[0].timestamp).toDateString() !== new Date().toDateString()) h = [];
+  let h = getHistory(); // getHistory() already clears old data
   h.unshift(item);
   // Cap at 100 items to prevent localStorage overflow
   if (h.length > 100) h = h.slice(0, 100);
@@ -226,7 +316,7 @@ function addToHistory(item) {
   renderHistory();
 }
 
-// XSS-safe history rendering
+// XSS-safe history rendering with full DD/MM/YY timestamps
 function renderHistory() {
   const h = getHistory();
   historyPanel.innerHTML = '';
@@ -262,7 +352,8 @@ function renderHistory() {
     const statusEl = statusCol.querySelector('.history-status');
     statusEl.textContent = item.status;
     statusEl.style.cssText = badgeStyle;
-    statusCol.querySelector('.history-time').textContent = new Date(item.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    // Full DD/MM/YY timestamp
+    statusCol.querySelector('.history-time').textContent = formatTimestamp(item.timestamp);
     
     const editBtn = document.createElement('button');
     editBtn.className = 'history-edit-btn';
@@ -280,18 +371,27 @@ function renderHistory() {
 }
 
 // === CONNECTIVITY CHECK ===
-let isServerReachable = true;
+// Start as false until first connectivity check confirms online
+let isServerReachable = false;
 let lastConnectivityCheck = 0;
+let connectivityCheckInProgress = false;
 
 async function checkConnectivity() {
+  // Prevent multiple simultaneous checks
+  if (connectivityCheckInProgress) return isServerReachable;
+  connectivityCheckInProgress = true;
+  
   try {
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    
     const res = await fetch(ENDPOINT + '?ping=1', { 
       method: 'GET', 
       cache: 'no-cache',
       signal: controller.signal 
     });
+    
+    clearTimeout(timeoutId);
     isServerReachable = res.ok;
     lastConnectivityCheck = Date.now();
     return isServerReachable;
@@ -299,6 +399,8 @@ async function checkConnectivity() {
     isServerReachable = false;
     lastConnectivityCheck = Date.now();
     return false;
+  } finally {
+    connectivityCheckInProgress = false;
   }
 }
 
@@ -310,7 +412,7 @@ async function send(payload) {
       redirect: 'follow',
       body: JSON.stringify(payload),
       cache: 'no-cache',
-      signal: AbortSignal.timeout(10000) // 10 second timeout (reduced from 30s)
+      signal: AbortSignal.timeout(10000) // 10 second timeout
     });
 
     if (!res.ok) return 'ERROR';
@@ -324,7 +426,7 @@ async function send(payload) {
     }
 
     // Handle server busy response (lock acquisition failed)
-    if (data.status === 'BUSY') {
+    if (data.status === 'BUSY' || data.status === 'ERROR' && data.message && data.message.includes('busy')) {
       return 'BUSY';
     }
 
@@ -340,17 +442,19 @@ async function send(payload) {
   }
 }
 
-// Scan lock to prevent double-scanning
+// Scan lock to prevent double-scanning (CRITICAL for concurrent operator protection)
 let isProcessing = false;
 
 scanInput.addEventListener('keydown', async (ev) => {
   if (ev.key !== 'Enter') return;
   
+  // CRITICAL: Prevent double scans from rapid Enter key presses
   if (isProcessing) {
     playSoundError();
     return;
   }
   
+  // Block scanning when offline
   if (!isServerReachable) {
     playSoundError();
     show('❌ OFFLINE - Swipe down to refresh', 'err');
@@ -361,6 +465,7 @@ scanInput.addEventListener('keydown', async (ev) => {
   let raw = scanInput.value.trim(); 
   if (!raw) return;
 
+  // Clean control characters that can corrupt JSON
   raw = raw.replace(/[\x00-\x1F\x7F]/g, ''); 
 
   if (raw.startsWith("'")) {
@@ -373,18 +478,23 @@ scanInput.addEventListener('keydown', async (ev) => {
 
   if (!cleanedSerial) { show('INVALID FORMAT', 'err'); playSoundError(); scanInput.value=''; return; }
 
+  // Clear input immediately
   scanInput.value = '';
   clearBtn.style.display = 'none';
   
+  // LOCK: Prevent any other scans while this one processes
   isProcessing = true;
   scanInput.disabled = true;
   scanInput.style.opacity = '0.5';
   show('⏳ Sending...', 'queued');
   
+  // Optimistic UI update
   lastPart.textContent = cleanedPart || 'N/A';
   lastSerial.textContent = cleanedSerial;
   lastScanStatus.textContent = 'SENDING';
   lastScanStatus.style.cssText = 'background:#dbeafe; color:#1e40af;';
+  if (lastScanTime) lastScanTime.textContent = 'Sending...';
+  if (lastScanRelative) lastScanRelative.textContent = '';
   
   const payload = {
     secret: SHARED_SECRET,
@@ -410,11 +520,12 @@ scanInput.addEventListener('keydown', async (ev) => {
     playSoundDuplicate();
     show('⚠️ DUPLICATE', 'dup');
   } else if (status === 'BUSY') {
-    // Server lock acquisition failed - retry scenario
+    // Server lock acquisition failed - another operator is writing
     lastScanStatus.style.cssText = 'background:#fef3c7; color:#92400e;';
     lastScanStatus.textContent = 'BUSY';
     playSoundError();
     show('⏳ Server busy - try again', 'dup');
+    // UNLOCK immediately so they can retry
     isProcessing = false;
     scanInput.disabled = false;
     scanInput.style.opacity = '1';
@@ -425,6 +536,7 @@ scanInput.addEventListener('keydown', async (ev) => {
     lastScanStatus.textContent = 'FAILED';
     playSoundError();
     show('❌ FAILED - Try again when online', 'err');
+    // UNLOCK immediately so they can retry
     isProcessing = false;
     scanInput.disabled = false;
     scanInput.style.opacity = '1';
@@ -432,9 +544,12 @@ scanInput.addEventListener('keydown', async (ev) => {
     return;
   }
 
-  addToHistory({ part: cleanedPart, serial: cleanedSerial, status, timestamp: new Date() });
+  // Only save to history if scan was accepted by server
+  const now = new Date();
+  addToHistory({ part: cleanedPart, serial: cleanedSerial, status, timestamp: now });
   saveLastScan(cleanedPart, cleanedSerial, status);
 
+  // UNLOCK: Allow next scan
   isProcessing = false;
   scanInput.disabled = false;
   scanInput.style.opacity = '1';
@@ -592,18 +707,40 @@ function updateNetworkStatus(online) {
   }
 }
 
-window.addEventListener('online', () => updateNetworkStatus(true));
+window.addEventListener('online', () => {
+  // Browser says online, but verify with server ping
+  checkConnectivity().then(online => updateNetworkStatus(online));
+});
 window.addEventListener('offline', () => updateNetworkStatus(false));
 
+// Regular connectivity check every 30 seconds
 setInterval(async () => {
-  const wasOnline = isOnline;
   const nowOnline = await checkConnectivity();
-  if (wasOnline !== nowOnline) {
-    updateNetworkStatus(nowOnline);
-  }
+  updateNetworkStatus(nowOnline);
 }, 30000);
 
-setTimeout(checkConnectivity, 2000);
+// CRITICAL: Check connectivity when tablet wakes from sleep
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible') {
+    // Tablet just woke up - immediately check connectivity
+    const net = document.getElementById('netStatus');
+    if (net) {
+      net.textContent = 'CHECKING...';
+      net.style.background = '#6b7280';
+    }
+    
+    const online = await checkConnectivity();
+    updateNetworkStatus(online);
+    
+    // Also refresh wake lock
+    if (wakeLock !== null) {
+      requestWakeLock();
+    }
+  }
+});
+
+// Check connectivity immediately on load
+checkConnectivity().then(online => updateNetworkStatus(online));
 
 let isLocked = localStorage.getItem('isLocked') === 'true';
 
@@ -797,12 +934,6 @@ async function requestWakeLock() {
   } catch (err) {}
 }
 requestWakeLock();
-
-document.addEventListener('visibilitychange', () => {
-  if (wakeLock !== null && document.visibilityState === 'visible') {
-    requestWakeLock();
-  }
-});
 
 // SCREEN DIMMER
 let dimTimer;
